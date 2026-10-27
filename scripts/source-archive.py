@@ -6,7 +6,7 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-TOP_FILES = ['Package.swift', 'README.txt', 'LICENSE', 'BRANDING.txt', 'THIRD_PARTY.txt',
+TOP_FILES = ['Package.swift', 'README.rst', 'LICENSE', 'BRANDING.txt', 'THIRD_PARTY.txt',
              'CONTRIBUTING.txt', 'SECURITY.txt', '.gitignore']
 DIRECTORIES = ['Sources', 'Tests', 'scripts', 'Resources', 'desktop', 'docs', '.github']
 EXCLUDED = {'.build', 'dist', 'build', '__pycache__', '.pytest_cache', '.ruff_cache', '.venv', 'node_modules'}

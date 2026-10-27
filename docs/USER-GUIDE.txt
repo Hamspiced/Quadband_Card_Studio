@@ -1,4 +1,5 @@
 # Quadband Card Studio by Midwest Gadgets
+Detailed user guide. Paths and commands below are relative to the repository root.
 
 **Version 1.0.2 — macOS, Windows and Linux source. GPL-3.0-only.**
 
