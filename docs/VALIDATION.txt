@@ -1,10 +1,12 @@
-# Validation status — 1.0.0
+# Validation status — 1.0.1
 
 ## Automated checks
 
-The shared Python implementation passed 90 automated tests (two optional hardware tests skipped in the ordinary run) and was tested on macOS with Python 3.12 and Qt/PySide6 6.12.0. Its tests cover protocol framing, delayed/fragmented responses, device failures, 19 record types, Classic memory protection, NDEF length-last commit, profile interoperability, batch removal/failure handling, EPC control-bit preservation and no automatic write retries. Password-free T5577 tests reject legacy password writers, block 7, PWD-enabled configurations, authenticated writes and page-1 writes. Adapter tests exercise PC/SC transaction cleanup and authentication, serial loopback, and BLE pairing order, chunking and failure cleanup. UI tests construct all workspaces and record forms and clear session data.
+The shared Python implementation passed 93 automated tests (two optional hardware tests skipped in the ordinary run) and was tested on macOS with Python 3.12 and Qt/PySide6 6.12.0. Its tests cover protocol framing, delayed/fragmented responses, device failures, 19 record types, Classic memory protection, NDEF length-last commit, profile interoperability, batch removal/failure handling, EPC control-bit preservation and no automatic write retries. Password-free T5577 tests reject legacy password writers, block 7, PWD-enabled configurations, authenticated writes and page-1 writes. Adapter tests exercise PC/SC transaction cleanup and authentication, serial loopback, and BLE pairing order, chunking and failure cleanup. UI tests construct all workspaces and record forms and clear session data.
 
-The native Swift application passed 87 automated tests, with five optional hardware tests skipped (92 total). It has its own core, transport, workflow and rendered-view tests. Hardware tests are opt-in. Physical card writes are not part of normal test runs. See build logs/test results rather than treating a version number as proof of hardware compatibility.
+The native Swift application passed 89 automated tests, with five optional hardware tests skipped (94 total). It has its own core, transport, workflow and rendered-view tests. Hardware tests are opt-in. Physical card writes are not part of normal test runs. See build logs/test results rather than treating a version number as proof of hardware compatibility.
+
+V1.01 render checks cover Light/Dark workspaces and editor sheets, USB/Bluetooth sidebar controls, high-DPI logos and persistent appearance selection. No physical reader writes were performed for this UI update.
 
 ## Hardware evidence
 
@@ -24,7 +26,7 @@ Chameleon Bluetooth reached a firmware-protected characteristic but macOS pairin
 | Chameleon | USB/BLE capability negotiation, pairing, LF scans, HF read/write, open T5577 writes only on firmware advertising 3016 |
 | T5577 | Use an unprotected expendable tag; verify identity and independently inspect config/PWD/block 7 if hardware supports it; never send legacy password-writing commands |
 
-The Python wheel and source distribution built successfully, all six Qt workspaces rendered offscreen, and the shared PyInstaller recipe built a host-only macOS smoke package. This smoke package is not a Windows/Linux binary and is not the supported native Mac release. Native Windows/Linux build jobs are supplied but have not been run on a remote CI service from this workspace. This Mac cannot certify Windows WinSCard/WinRT or Linux BlueZ/pcsc-lite behavior. No Windows/Linux hardware pass is claimed. Linux packages target Ubuntu 24.04; other distributions need their own checks.
+The Python wheel and source distribution built successfully, all six Qt workspaces rendered offscreen, and the shared PyInstaller recipe built a host-only macOS smoke package. This smoke package is not a Windows/Linux binary and is not the supported native Mac release. The earlier 1.0.0 Windows/Linux CI jobs passed their tests, packaging and smoke checks; the new release requires its own CI run. This Mac cannot certify Windows WinSCard/WinRT or Linux BlueZ/pcsc-lite behavior. No Windows/Linux hardware pass is claimed. Linux packages target Ubuntu 24.04; other distributions need their own checks.
 
 ## Local Windows package — October 27, 2026
 

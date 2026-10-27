@@ -3,7 +3,7 @@ import SwiftUI
 
 struct NFCToolkitView: View {
     @ObservedObject var model: NFCModel
-    private let accent = Color(red: 0, green: 0.43, blue: 0.40)
+    private let accent = AppTheme.accent
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
@@ -74,6 +74,6 @@ struct NFCToolkitView: View {
                     }.padding(.trailing, 8)
                 }.frame(height: min(CGFloat(model.copyResults.count) * 62, 240))
             }
-        }.padding(20).background(.white).cornerRadius(12)
+        }.padding(20).background(AppTheme.surface).cornerRadius(12)
     }
 }

@@ -4,7 +4,7 @@ import MagStripeCore
 
 struct LFView: View {
     @ObservedObject var model: LFModel
-    private let accent = Color(red:0,green:0.43,blue:0.40)
+    private let accent = AppTheme.accent
     var body: some View {
         VStack(alignment:.leading,spacing:20) {
             HStack(spacing:12) {
@@ -13,45 +13,17 @@ struct LFView: View {
                 Spacer(minLength:0)
                 if model.busy && !model.hfWorkflowBusy { Button("Cancel") { model.cancel() } }
             }.padding(14).background((model.statusKind == .error ? Color.orange : accent).opacity(0.07)).cornerRadius(10)
-            connection
+            Text("Connect Chameleon Ultra in the sidebar. The same USB or Bluetooth connection serves HF and LF workspaces.")
+                .font(.callout).foregroundColor(.secondary)
             cardReader
             tools
             if !model.log.isEmpty {
                 DisclosureGroup("Activity") {
                     VStack(alignment:.leading,spacing:6) { ForEach(Array(model.log.prefix(12).enumerated()),id:\.offset) { _,text in Text(text).font(.system(size:10)).textSelection(.enabled) } }.frame(maxWidth:.infinity,alignment:.leading).padding(.top,8)
-                }.padding(18).background(.white).cornerRadius(12)
+                }.padding(18).background(AppTheme.surface).cornerRadius(12)
             }
         }
-        .onChange(of:model.link) { _ in model.bluetooth.stop() }
-        .onAppear { if model.autoDiscovery && model.ports.isEmpty { model.refresh() } }
         .sheet(item:$model.preview) { intent in review(intent) }
-    }
-    private var connection: some View {
-        VStack(alignment:.leading,spacing:14) {
-            HStack {
-                Label("CHAMELEON ULTRA",systemImage:"wave.3.right").font(.system(size:11,weight:.semibold))
-                Spacer()
-                Picker("Connection",selection:$model.link) { ForEach(LFModel.Link.allCases,id:\.self) { Text($0.rawValue).tag($0) } }.pickerStyle(.segmented).labelsHidden().frame(width:200).disabled(model.busy || model.hfWorkflowBusy || model.connected)
-            }
-            if model.link == .usb {
-                HStack {
-                    if model.ports.isEmpty { Text("Connect the Chameleon by USB, then refresh.").font(.callout).foregroundColor(.secondary) }
-                    else { Picker("Reader",selection:$model.selectedPort) { ForEach(model.ports) { Text($0.label).tag($0.path) } } }
-                    Spacer(); Button("Refresh") { model.refresh() }
-                }.disabled(model.busy || model.hfWorkflowBusy || model.connected)
-            } else { LFBluetoothPicker(model:model,bluetooth:model.bluetooth) }
-            HStack {
-                VStack(alignment:.leading,spacing:5) {
-                    if let info = model.info {
-                        Text(info.version).font(.system(size:12,weight:.medium))
-                        Text("Available: " + info.formats.map(\.rawValue).joined(separator:", ")).font(.caption).foregroundColor(.secondary)
-                    } else { Text("125 kHz LF cards · USB or Bluetooth").font(.caption).foregroundColor(.secondary) }
-                }
-                Spacer()
-                Button(model.connected ? "Disconnect" : "Connect") { if model.connected { model.disconnect() } else { model.connect() } }
-                    .buttonStyle(.borderedProminent).disabled(model.busy || model.hfWorkflowBusy || (!model.connected && (model.link == .usb ? model.selectedPort.isEmpty : model.selectedBluetooth == nil)))
-            }
-        }.padding(20).background(.white).cornerRadius(12)
     }
     private var cardReader: some View {
         VStack(alignment:.leading,spacing:14) {
@@ -85,7 +57,7 @@ struct LFView: View {
                 }
             } else { Text("Place one LF card on the antenna to read its ID. A saved scan can be cloned to a T5577 tag.").font(.callout).foregroundColor(.secondary) }
             Text("Reads the card’s transmitted ID and format. Full T5577 memory dumps are not exposed by the supported firmware.").font(.caption).foregroundColor(.secondary)
-        }.padding(20).background(.white).cornerRadius(12)
+        }.padding(20).background(AppTheme.surface).cornerRadius(12)
     }
     private var tools: some View {
         VStack(alignment:.leading,spacing:14) {
@@ -107,7 +79,7 @@ struct LFView: View {
             if model.connected && !model.canWriteDefault && !model.busy {
                 Text("This firmware does not expose password-free T5577 writing. Scanning and HF operations remain available.").font(.caption).foregroundColor(.orange)
             }
-        }.padding(20).background(.white).cornerRadius(12)
+        }.padding(20).background(AppTheme.surface).cornerRadius(12)
     }
     private func review(_ intent: LFWriteIntent) -> some View {
         VStack(alignment:.leading,spacing:16) {
@@ -119,22 +91,5 @@ struct LFView: View {
             if intent.action == .recover { Text("Recovery is an attempt to restore a readable EM410x configuration. It cannot repair permanently locked or damaged tags.").font(.callout).foregroundColor(.secondary) }
             HStack { Button("Cancel") { model.preview = nil }; Spacer(); Button("Write & verify") { model.write(intent) }.buttonStyle(.borderedProminent) }
         }.padding(28).frame(width:560)
-    }
-}
-private struct LFBluetoothPicker: View {
-    @ObservedObject var model: LFModel
-    @ObservedObject var bluetooth: ChameleonBluetooth
-    var body: some View {
-        VStack(alignment:.leading,spacing:10) {
-            HStack {
-                Picker("Device",selection:$model.selectedBluetooth) {
-                    Text("Choose Chameleon").tag(nil as UUID?)
-                    ForEach(bluetooth.devices) { Text($0.name + " · " + $0.id.uuidString.prefix(8)).tag(Optional($0.id)) }
-                }
-                Button(bluetooth.scanning ? "Stop scan" : "Scan Bluetooth") { if bluetooth.scanning { bluetooth.stop() } else { bluetooth.scan() } }
-            }.disabled(model.connected || model.busy)
-            Text(bluetooth.message).font(.caption).foregroundColor(.secondary)
-            Text("If macOS requests pairing, enter your Chameleon’s configured Bluetooth PIN.").font(.caption).foregroundColor(.secondary)
-        }
     }
 }

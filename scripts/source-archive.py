@@ -49,5 +49,5 @@ def archive(destination, root=ROOT):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--output', type=Path, default=ROOT/'dist'/'Quadband-Card-Studio-1.0.0-source.zip')
+    parser.add_argument('--output', type=Path, default=ROOT/'dist'/'Quadband-Card-Studio-1.0.1-source.zip')
     archive(parser.parse_args().output)

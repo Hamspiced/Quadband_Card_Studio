@@ -25,7 +25,7 @@ python3 -m venv .venv
 .venv/bin/quadband-card-studio
 ```
 
-A Python wheel/source tarball can also be installed with `python -m pip install path/to/quadband_card_studio-1.0.0-py3-none-any.whl`; pip resolves platform dependencies. These Python packages are **not standalone Windows/Linux executables**.
+A Python wheel/source tarball can also be installed with `python -m pip install path/to/quadband_card_studio-1.0.1-py3-none-any.whl`; pip resolves platform dependencies. These Python packages are **not standalone Windows/Linux executables**.
 
 ## Readers and workspaces
 

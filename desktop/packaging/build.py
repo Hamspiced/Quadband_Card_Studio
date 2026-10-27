@@ -38,7 +38,7 @@ def notices(destination):
                     shutil.copyfile(source, target)
     (destination/'dependencies.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
     (destination/'BUILD-INFO.json').write_text(json.dumps({'platform': platform.platform(), 'machine': platform.machine(),
-            'python': sys.version, 'app_version': '1.0.0'}, indent=2), encoding='utf-8')
+            'python': sys.version, 'app_version': '1.0.1'}, indent=2), encoding='utf-8')
 
 
 def main():
@@ -65,7 +65,7 @@ def main():
             shutil.copyfile(DESKTOP/'packaging'/name, destination/name)
     label = 'Windows' if sys.platform == 'win32' else 'Linux' if sys.platform == 'linux' else 'macOS-PORT-SMOKE-ONLY'
     extension = 'zip' if sys.platform == 'win32' else 'gztar'
-    output = shutil.make_archive(str(DESKTOP/'dist'/f'Quadband-Card-Studio-1.0.0-{label}-{platform.machine()}'),
+    output = shutil.make_archive(str(DESKTOP/'dist'/f'Quadband-Card-Studio-1.0.1-{label}-{platform.machine()}'),
                                 extension, root_dir=destination.parent, base_dir=destination.name)
     print(output)
 

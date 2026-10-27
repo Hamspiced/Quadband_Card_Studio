@@ -51,7 +51,7 @@ struct ReaderConfigurationView: View {
                 }
             }
             Text("The reader controls are built into this app; no Python setup is needed. The original reference script is not redistributed in public builds.").font(.caption).foregroundColor(.secondary)
-        }.padding(20).background(.white).cornerRadius(12)
+        }.padding(20).background(AppTheme.surface).cornerRadius(12)
         .sheet(isPresented:$model.readerConfigPreview) {
             VStack(alignment:.leading,spacing:18) {
                 Text("Apply reader settings").font(.title2.weight(.semibold))

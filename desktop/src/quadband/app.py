@@ -5,12 +5,12 @@ from datetime import datetime
 from pathlib import Path
 import sys
 import threading
-from PySide6.QtCore import Qt, QThread, Signal, QTimer
-from PySide6.QtGui import QPixmap, QIcon
+from PySide6.QtCore import Qt, QThread, Signal, QTimer, QSettings
+from PySide6.QtGui import QPixmap, QIcon, QPainter, QPalette, QColor
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QFormLayout,
     QLabel, QPushButton, QComboBox, QLineEdit, QPlainTextEdit, QListWidget, QStackedWidget, QTabWidget,
     QGroupBox, QScrollArea, QSpinBox, QCheckBox, QMessageBox, QFileDialog, QDialog, QDialogButtonBox,
-    QTableWidget, QTableWidgetItem, QHeaderView)
+    QTableWidget, QTableWidgetItem, QHeaderView, QSizePolicy)
 from . import __version__, magstripe, hf, ndef, chameleon, pcsc, reader_tools
 from .common import CardError, require, hex_bytes, load_json, save_json
 from .service import Service, StopFlag, call_sync
@@ -57,6 +57,14 @@ def text_label(text, style=''):
     label = QLabel(text)
     label.setWordWrap(True)
     label.setTextFormat(Qt.TextFormat.PlainText)
+    for color in ('#a7b7c3', '#91a9b7'):
+        if f'color: {color};' in style:
+            label.setProperty('tone', 'muted')
+            style = style.replace(f'color: {color};', '')
+    style = style.replace('color: #edf6f2;', '')
+    if 'color: #ffa99b;' in style:
+        label.setProperty('tone', 'error')
+        style = style.replace('color: #ffa99b;', '')
     if style:
         label.setStyleSheet(style)
     return label
@@ -121,25 +129,63 @@ def form_group(title, fields):
     return g
 
 
+class BrandLogo(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.pixmap = QPixmap(str(ASSETS / 'MidwestGadgets.png'))
+        self._render_key = None
+        self._rendered = QPixmap()
+        self.setFixedSize(144, 144)
+        self.setAccessibleName('Midwest Gadgets logo')
+
+    def paintEvent(self, event):
+        ratio = self.devicePixelRatioF()
+        key = (self.width(), self.height(), ratio)
+        if key != self._render_key:
+            self._rendered = self.pixmap.scaled(round(self.width() * ratio), round(self.height() * ratio),
+                Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            self._rendered.setDevicePixelRatio(ratio)
+            self._render_key = key
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        target = self.rect()
+        target.setSize(self.pixmap.size().scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatio))
+        target.moveCenter(self.rect().center())
+        painter.drawPixmap(target, self._rendered)
+
+
 class Connection(QWidget):
-    def __init__(self, window, family):
+    def __init__(self, window, family, compact=False):
         super().__init__()
         self.window, self.family = window, family
         self.mode = combo(['USB serial', 'Bluetooth'] if family == 'chameleon' else ['USB serial'] if family == 'uhf' else ['USB HID', 'USB serial', 'Bluetooth'])
         self.device = QComboBox()
-        self.device.setMinimumWidth(240)
+        self.device.setMinimumWidth(0 if compact else 240)
+        if compact:
+            self.device.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+            self.device.setMinimumContentsLength(10)
+            self.device.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.baud = combo(['115200'] if family == 'chameleon' else ['9600', '115200', '57600', '38400', '19200', '230400'])
         self.address = QSpinBox()
         self.address.setRange(0, 254)
         self.status = text_label('Disconnected', 'color: #a7b7c3;')
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(row(self.mode, self.device, button('Refresh / scan', self.refresh)))
-        fields = row(text_label('Baud'), self.baud, button('Connect', self.connect, True), button('Disconnect', self.disconnect))
-        if family == 'uhf':
-            fields.layout().insertWidget(2, text_label('Reader address'))
-            fields.layout().insertWidget(3, self.address)
-        layout.addWidget(fields)
+        if compact:
+            layout.addWidget(self.mode)
+            layout.addWidget(self.device)
+            layout.addWidget(button('Refresh / scan', self.refresh))
+        else:
+            layout.addWidget(row(self.mode, self.device, button('Refresh / scan', self.refresh)))
+        if compact:
+            layout.addWidget(row(text_label('Baud'), self.baud))
+            layout.addWidget(row(button('Connect', self.connect, True), button('Disconnect', self.disconnect)))
+        else:
+            fields = row(text_label('Baud'), self.baud, button('Connect', self.connect, True), button('Disconnect', self.disconnect))
+            if family == 'uhf':
+                fields.layout().insertWidget(2, text_label('Reader address'))
+                fields.layout().insertWidget(3, self.address)
+            layout.addWidget(fields)
         layout.addWidget(self.status)
         self.mode.currentTextChanged.connect(lambda _: self.device.clear())
 
@@ -212,8 +258,9 @@ class RecordDialog(QDialog):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, settings=None):
         super().__init__()
+        self.settings = settings if settings is not None else QSettings('Midwest Gadgets', 'Quadband Card Studio')
         self.setWindowTitle('Quadband Card Studio by Midwest Gadgets')
         self.resize(1250, 900)
         self.setMinimumSize(960, 680)
@@ -233,28 +280,47 @@ class MainWindow(QMainWindow):
         self.records, self.tags, self.settings_inputs = [], {}, {}
         self.batch_success = self.batch_failure = 0
         self.build_ui()
+        self.apply_theme()
+        QApplication.instance().styleHints().colorSchemeChanged.connect(self.system_appearance_changed)
 
     def build_ui(self):
         central = QWidget()
         self.setCentralWidget(central)
         main = QHBoxLayout(central)
         sidebar = QWidget()
-        sidebar.setFixedWidth(238)
+        self.sidebar = sidebar
         side = QVBoxLayout(sidebar)
-        logo = QLabel()
-        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        logo.setPixmap(QPixmap(str(ASSETS / 'MidwestGadgets.png')).scaled(150, 150, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
-        side.addWidget(logo)
+        self.logo = BrandLogo()
+        side.addWidget(self.logo, alignment=Qt.AlignmentFlag.AlignHCenter)
         side.addWidget(text_label('QUADBAND\nCard Studio', 'font-size: 25px; font-weight: 700; color: #edf6f2;'))
         side.addWidget(text_label('by Midwest Gadgets', 'color: #a7b7c3;'))
+        self.appearance = combo(['System', 'Light', 'Dark'])
+        self.appearance.setAccessibleName('Appearance')
+        self.appearance.setCurrentText(self.settings.value('appearance', 'System'))
+        self.appearance.currentTextChanged.connect(self.change_appearance)
+        side.addWidget(row(text_label('Appearance'), self.appearance))
         side.addSpacing(22)
         self.nav = QListWidget()
-        self.nav.addItems(['Magstripe Write', 'Magstripe Read', 'HF Workspace', 'UHF Workspace', 'LF Workspace', 'About & help'])
+        self.nav.addItems(['Magstripe Write', 'Magstripe Read', 'UHF Workspace', 'HF Workspace', 'LF Workspace', 'About & help'])
+        self.nav.setFixedHeight(300)
         side.addWidget(self.nav)
+        self.connection_panel = QWidget()
+        connections = QVBoxLayout(self.connection_panel)
+        connections.setContentsMargins(0, 0, 0, 0)
+        self.msr_connection = Connection(self, 'msr', compact=True)
+        self.lf_connection = Connection(self, 'chameleon', compact=True)
+        connections.addWidget(group('Magstripe reader', self.msr_connection))
+        connections.addWidget(group('Chameleon Ultra · HF / LF', self.lf_connection))
+        side.addWidget(self.connection_panel)
         self.clear_button = button('Clear session', self.clear_session)
         side.addWidget(self.clear_button)
         side.addWidget(text_label(f'GPLv3 · Version {__version__}\nLocal data · No cloud account', 'color: #91a9b7; font-size: 12px;'))
-        main.addWidget(sidebar)
+        sidebar_scroll = QScrollArea()
+        sidebar_scroll.setWidgetResizable(True)
+        sidebar_scroll.setFixedWidth(280)
+        sidebar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        sidebar_scroll.setWidget(sidebar)
+        main.addWidget(sidebar_scroll)
         right = QVBoxLayout()
         main.addLayout(right, 1)
         self.stack = QStackedWidget()
@@ -262,8 +328,8 @@ class MainWindow(QMainWindow):
         for title, subtitle, build in [
             ('Magstripe Write', 'MSR X6 USB / Bluetooth · MSR605 serial · MSR605X HID', self.build_msr_write),
             ('Magstripe Read', 'MSR600 keyboard swipes and connected MSR writers', self.build_msr_read),
-            ('HF Workspace', 'NFC records and Classic 1K data · ACS or Chameleon Ultra', self.build_hf),
             ('UHF Workspace', 'Piswords UHF2 · Inventory, memory and EPC', self.build_uhf),
+            ('HF Workspace', 'NFC records and Classic 1K data · ACS or Chameleon Ultra', self.build_hf),
             ('LF Workspace', 'Chameleon Ultra · LF identities and T5577 tools', self.build_lf),
             ('About & help', 'Open source card tools by Midwest Gadgets', self.build_about)]:
             page = QWidget()
@@ -287,8 +353,7 @@ class MainWindow(QMainWindow):
         self.nav.setCurrentRow(0)
 
     def build_msr_write(self, layout):
-        self.msr_connection = Connection(self, 'msr')
-        layout.addWidget(group('Writer connection', self.msr_connection))
+        layout.addWidget(text_label('Connect your magstripe reader by USB or Bluetooth in the sidebar.'))
         self.tracks = [edit() for _ in range(3)]
         self.densities = [combo(['210', '75']), combo(['75', '210']), combo(['210', '75'])]
         self.high_coercivity = QCheckBox('HiCo card')
@@ -795,8 +860,7 @@ class MainWindow(QMainWindow):
                 self.failed(str(exc))
 
     def build_lf(self, layout):
-        self.lf_connection = Connection(self, 'chameleon')
-        layout.addWidget(group('Chameleon Ultra', self.lf_connection))
+        layout.addWidget(text_label('Connect Chameleon Ultra by USB or Bluetooth in the sidebar. The same connection serves HF and LF.'))
         self.lf_format = combo(['Automatic']+list(chameleon.FORMATS))
         self.lf_hint = QSpinBox()
         self.lf_hint.setRange(0, 42)
@@ -809,7 +873,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(form_group('T5577 tools · no passwords', [('Default EM410x test ID', self.lf_default)]))
         layout.addWidget(row(button('Write default value', lambda: self.write_lf('default')), button('Recover T5577', lambda: self.write_lf('recover'))))
         layout.addWidget(text_label('Password writes are disabled. Writing requires Chameleon firmware with open block-write support. Password-free encoders support EM410x, Electra, Viking, ioProx, PAC and Jablotron; HID/Pyramid are read-only. Recovery cannot repair damaged, locked or password-protected cards.'))
-        layout.addWidget(text_label('HF cards: connect the Chameleon here, then select it in HF Workspace. LF scans capture a transmitted identity, not a complete T5577 memory dump.'))
+        layout.addWidget(text_label('HF cards: connect the Chameleon in the sidebar, then select it in HF Workspace. LF scans capture a transmitted identity, not a complete T5577 memory dump.'))
 
     def scan_lf(self):
         format, hint = self.lf_format.currentText(), self.lf_hint.value()
@@ -888,6 +952,7 @@ class MainWindow(QMainWindow):
         if not graceful:
             self.stop_flag = None
         self.stack.setEnabled(False)
+        self.connection_panel.setEnabled(False)
         self.clear_button.setEnabled(False)
         self.stop_button.setEnabled(True)
         self.note(status)
@@ -896,11 +961,12 @@ class MainWindow(QMainWindow):
     def note(self, message):
         if hasattr(self, 'status'):
             self.status.setText(str(message))
-            self.status.setStyleSheet('color: #cae6dd;')
+            self.status.setStyleSheet('')
 
     def finish(self):
         self.busy = False
         self.stack.setEnabled(True)
+        self.connection_panel.setEnabled(True)
         self.clear_button.setEnabled(True)
         self.stop_button.setEnabled(False)
         self.stop_flag = None
@@ -924,7 +990,7 @@ class MainWindow(QMainWindow):
         self.callback = None
         self.finish()
         self.status.setText(message)
-        self.status.setStyleSheet('color: #ffa99b;')
+        self.status.setStyleSheet(f'color: {"#ffa99b" if self.dark_mode else "#a52d20"};')
         if self.closing:
             self.begin_close()
 
@@ -964,6 +1030,48 @@ class MainWindow(QMainWindow):
             self.worker.wait(3000)
             self.close()
         self.run(self.service.close, closed, 'Closing readers…')
+
+    def change_appearance(self, mode):
+        self.settings.setValue('appearance', mode)
+        self.apply_theme()
+
+    def system_appearance_changed(self, scheme):
+        if self.appearance.currentText() == 'System':
+            self.apply_theme()
+
+    def apply_theme(self):
+        app = QApplication.instance()
+        mode = self.appearance.currentText()
+        self.dark_mode = mode == 'Dark' or (mode == 'System' and app.styleHints().colorScheme() == Qt.ColorScheme.Dark)
+        colors = {'window': '#14202b', 'text': '#e4edf2', 'base': '#101922', 'button': '#293b49',
+                  'muted': '#a7b7c3', 'selection': '#266a59'} if self.dark_mode else {
+                  'window': '#f3f6f8', 'text': '#182b38', 'base': '#ffffff', 'button': '#e3eaf0',
+                  'muted': '#526577', 'selection': '#246b55'}
+        palette = QPalette()
+        for role, color in [(QPalette.ColorRole.Window, 'window'), (QPalette.ColorRole.WindowText, 'text'),
+                            (QPalette.ColorRole.Base, 'base'), (QPalette.ColorRole.AlternateBase, 'window'),
+                            (QPalette.ColorRole.Text, 'text'), (QPalette.ColorRole.Button, 'button'),
+                            (QPalette.ColorRole.ButtonText, 'text'), (QPalette.ColorRole.ToolTipBase, 'base'),
+                            (QPalette.ColorRole.ToolTipText, 'text'), (QPalette.ColorRole.Highlight, 'selection')]:
+            palette.setColor(role, QColor(colors[color]))
+        palette.setColor(QPalette.ColorRole.HighlightedText, QColor('#ffffff'))
+        for role in (QPalette.ColorRole.Text, QPalette.ColorRole.WindowText, QPalette.ColorRole.ButtonText):
+            palette.setColor(QPalette.ColorGroup.Disabled, role, QColor(colors['muted']))
+        app.setPalette(palette)
+        style = STYLE
+        if not self.dark_mode:
+            replacements = {'#14202b': '#f3f6f8', '#e4edf2': '#182b38', '#334653': '#b8c7d1',
+                            '#9edbc6': '#17634f', '#101922': '#ffffff', '#3a4c59': '#a7b9c6',
+                            '#293b49': '#e3eaf0', '#435968': '#9cadbb', '#365063': '#d3e1e9',
+                            '#78909c': '#647785', '#20313e': '#e3eaf0', '#243744': '#e3eaf0'}
+            for old, new in replacements.items():
+                style = style.replace(old, new)
+        style += f'\nQLabel[tone="muted"] {{ color: {colors["muted"]}; }}'
+        style += f'\nQLabel[tone="error"] {{ color: {"#ffa99b" if self.dark_mode else "#a52d20"}; }}'
+        style += '\nQPushButton[primary="true"], QListWidget::item:selected, QTabBar::tab:selected { color: #ffffff; }'
+        style += f'\nQToolTip {{ background: {colors["base"]}; color: {colors["text"]}; }}'
+        app.setStyleSheet(style)
+        self.status.setStyleSheet('')
 
     def closeEvent(self, event):
         if self.closed_ready:
@@ -1007,7 +1115,6 @@ def main():
     app.setApplicationName('Quadband Card Studio')
     app.setOrganizationName('Midwest Gadgets')
     app.setStyle('Fusion')
-    app.setStyleSheet(STYLE)
     window = MainWindow()
     window.show()
     if '--smoke-test' in sys.argv:

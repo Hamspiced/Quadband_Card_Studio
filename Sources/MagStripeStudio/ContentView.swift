@@ -4,14 +4,15 @@ import AppKit
 import MagStripeCore
 
 private let ink = Color(red: 0.09, green: 0.15, blue: 0.22)
-private let teal = Color(red: 0.0, green: 0.43, blue: 0.40)
-private let canvas = Color(red: 0.96, green: 0.97, blue: 0.98)
+private let teal = AppTheme.accent
+private let canvas = AppTheme.canvas
 
 struct ContentView: View {
     @EnvironmentObject var model: AppModel
+    @AppStorage("appearance") private var appearance = AppearanceMode.system.rawValue
     var body: some View {
         HStack(spacing: 0) {
-            sidebar.frame(width: 242).environment(\.colorScheme, .dark)
+            sidebar.frame(width: 260).environment(\.colorScheme, .dark)
             VStack(spacing: 0) {
                 header
                 ScrollView {
@@ -31,31 +32,37 @@ struct ContentView: View {
             }.background(canvas)
         }
         .tint(teal)
-        .preferredColorScheme(.light)
+        .preferredColorScheme((AppearanceMode(rawValue: appearance) ?? .system).colorScheme)
         .onChange(of: model.selectedPage) { _ in if model.keyboardArmed { model.stopKeyboard() } }
         .onChange(of: model.readerMode) { _ in if model.keyboardArmed { model.stopKeyboard() } }
     }
     private var sidebar: some View {
         ScrollView {
-        VStack(alignment: .leading, spacing: 22) {
-            VStack(alignment: .leading, spacing: 12) {
-                BrandLogo().frame(width: 76, height: 76)
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 8) {
+                BrandLogo().frame(width: 144, height: 144)
                 Text("Quadband").font(.system(size: 24, weight: .bold))
                 Text("CARD STUDIO").font(.system(size: 10, weight: .semibold)).tracking(2.4).foregroundColor(.white.opacity(0.7))
                 Text("by Midwest Gadgets").font(.system(size: 11)).foregroundColor(.white.opacity(0.55))
+                Picker("Appearance", selection: $appearance) {
+                    ForEach(AppearanceMode.allCases, id: \.rawValue) { Text($0.rawValue).tag($0.rawValue) }
+                }.pickerStyle(.menu).font(.system(size: 11))
+                    .accessibilityIdentifier("appearancePicker")
             }.padding(.top, 4)
-            VStack(spacing: 8) {
+            VStack(spacing: 4) {
                 Text("MAGSTRIPE").font(.system(size: 9, weight: .semibold)).tracking(1.5).foregroundColor(.white.opacity(0.5)).frame(maxWidth: .infinity, alignment: .leading).padding(.leading, 12)
                 navigation(.write, icon: "square.and.pencil")
                 navigation(.read, icon: "waveform.path")
                 Text("CONTACTLESS").font(.system(size: 9, weight: .semibold)).tracking(1.5).foregroundColor(.white.opacity(0.5)).frame(maxWidth: .infinity, alignment: .leading).padding(.leading, 12).padding(.top, 8)
-                navigation(.nfc, icon: "wave.3.right.circle")
                 navigation(.uhf, icon: "antenna.radiowaves.left.and.right")
+                navigation(.nfc, icon: "wave.3.right.circle")
                 navigation(.lf, icon: "waveform.path.ecg")
                 navigation(.help, icon: "questionmark.circle")
             }
             Rectangle().fill(.white.opacity(0.12)).frame(height: 1)
             WriterConnectionView(model: model, bluetooth: model.bluetooth)
+            Rectangle().fill(.white.opacity(0.12)).frame(height: 1)
+            ChameleonConnectionView(model: model.lf, bluetooth: model.lf.bluetooth)
             Spacer(minLength: 14)
             VStack(alignment: .leading, spacing: 8) {
                 Label("Local workspace", systemImage: "desktopcomputer").font(.system(size: 12, weight: .medium))
@@ -63,7 +70,7 @@ struct ContentView: View {
                     .font(.system(size: 11)).lineSpacing(4).foregroundColor(.white.opacity(0.5))
                 Button("Clear session") { model.clearSession() }.buttonStyle(.plain).foregroundColor(.mint).padding(.top, 6).disabled(model.busy || model.nfc.busy || model.uhf.busy || model.uhf.scanning || model.lf.busy)
             }
-        }.padding(22).foregroundColor(.white)
+        }.padding(18).foregroundColor(.white)
         }.frame(maxHeight: .infinity)
             .background(LinearGradient(colors: [ink, Color(red: 0.07, green: 0.11, blue: 0.17)], startPoint: .topLeading, endPoint: .bottomTrailing))
     }
@@ -74,21 +81,21 @@ struct ContentView: View {
                 Text(page.rawValue).font(.system(size:13, weight: .medium)).fixedSize(horizontal:false,vertical:true)
                 Spacer()
                 if model.selectedPage == page { Circle().fill(.mint).frame(width: 5, height: 5) }
-            }.padding(12).background(model.selectedPage == page ? .white.opacity(0.10) : .clear).cornerRadius(9)
+            }.padding(8).background(model.selectedPage == page ? .white.opacity(0.10) : .clear).cornerRadius(9)
         }.buttonStyle(.plain)
     }
     private var header: some View {
         HStack {
             VStack(alignment: .leading, spacing: 5) {
                 Text(model.selectedPage == .write ? "Magstripe Write" : model.selectedPage == .read ? "Magstripe Read" : model.selectedPage == .nfc ? "HF Workspace" : model.selectedPage == .uhf ? "UHF Workspace" : model.selectedPage == .lf ? "LF Workspace" : "Your card workbench")
-                    .font(.system(size: 26, weight: .semibold)).foregroundColor(ink)
+                    .font(.system(size: 26, weight: .semibold)).foregroundColor(.primary)
                 Text(model.selectedPage == .write ? "Prepare three tracks, write, then verify with a second swipe." : model.selectedPage == .read ? "Capture all available tracks from your reader." : model.selectedPage == .nfc ? "Read NFC records, create new ones, and manage your HF cards." : model.selectedPage == .uhf ? "Scan UHF tags, read memory, and write verified EPC changes." : model.selectedPage == .lf ? "Read LF cards, clone to T5577, and restore test tags." : "Set up your reader and make your first test card.")
                     .font(.system(size: 12)).foregroundColor(.secondary)
             }
             Spacer()
             Text(model.selectedPage == .nfc ? "ACS · CHAMELEON" : model.selectedPage == .uhf ? "PISWORDS · UHF" : model.selectedPage == .lf ? "CHAMELEON · LF" : "X6 · MSR600 · MSR605").font(.system(size: 10, weight: .semibold, design: .monospaced)).foregroundColor(teal)
                 .padding(.horizontal, 10).padding(.vertical, 7).background(teal.opacity(0.07)).clipShape(Capsule())
-        }.padding(.horizontal, 28).padding(.vertical, 24).background(.white)
+        }.padding(.horizontal, 28).padding(.vertical, 24).background(AppTheme.surface)
     }
     private var statusBanner: some View {
         let color: Color = model.statusKind == .error ? .orange : model.statusKind == .success ? teal : .secondary
@@ -163,7 +170,7 @@ struct ContentView: View {
                 Spacer()
                 Text("\(count) / \(limit) characters").font(.system(size: 10, design: .monospaced)).foregroundColor(count > limit ? .orange : .secondary)
             }
-        }.padding(16).background(.white).cornerRadius(12).overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.black.opacity(0.05)))
+        }.padding(16).background(AppTheme.surface).cornerRadius(12).overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.08)))
             .disabled(model.busy)
     }
     private var reader: some View {
@@ -202,7 +209,7 @@ struct ContentView: View {
                         .font(.system(size: 10)).foregroundColor(.secondary).multilineTextAlignment(.center)
                     KeyboardCapture(armed: model.keyboardArmed, generation: model.captureGeneration, onSwipe: model.acceptKeyboard, onError: model.keyboardError)
                         .frame(width: 1, height: 1).accessibilityLabel("Swipe input")
-                }.frame(maxWidth: .infinity).padding(32).background(.white).cornerRadius(12)
+                }.frame(maxWidth: .infinity).padding(32).background(AppTheme.surface).cornerRadius(12)
                 if !model.rawSwipe.isEmpty {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
@@ -215,7 +222,7 @@ struct ContentView: View {
                             .frame(maxWidth: .infinity, alignment: .leading).padding(12).background(canvas).cornerRadius(7)
                         Text("Changing Input format reprocesses this swipe immediately. Raw input is retained even when track assignment is unknown.")
                             .font(.system(size: 10)).foregroundColor(.secondary)
-                    }.padding(20).background(.white).cornerRadius(12)
+                    }.padding(20).background(AppTheme.surface).cornerRadius(12)
                 }
             } else {
                 VStack(alignment: .leading, spacing: 14) {
@@ -223,7 +230,7 @@ struct ContentView: View {
                     Text("Connect the X6 by USB/Bluetooth or the MSR605 by Serial in the sidebar. The density settings from Magstripe Write are used for this read.")
                         .font(.system(size: 12)).foregroundColor(.secondary)
                     Button("Read card") { model.readUSB() }.buttonStyle(.borderedProminent).controlSize(.large).disabled(!model.connected || model.busy)
-                }.padding(24).frame(maxWidth: .infinity, alignment: .leading).background(.white).cornerRadius(12)
+                }.padding(24).frame(maxWidth: .infinity, alignment: .leading).background(AppTheme.surface).cornerRadius(12)
             }
             if model.readCard != nil { results }
         }
@@ -255,7 +262,7 @@ struct ContentView: View {
                     }
                 }
             }
-        }.padding(20).background(.white).cornerRadius(12)
+        }.padding(20).background(AppTheme.surface).cornerRadius(12)
     }
     private var activity: some View {
         DisclosureGroup("Session activity") {
@@ -274,7 +281,7 @@ struct ContentView: View {
             helpItem("05", "Read and write NFC records", "Choose HF Workspace and place your Classic 1K card on the ACS reader. Read card handles standard NFC keys automatically and shows URLs, text and other records. Under Write records, add records or use the current ones, then Write records & verify. The card must already be NFC-formatted. UID and keys stay unchanged.")
             helpItem("06", "HF tools and advanced settings", "Tools contains ACR122U/1552U reader settings and buzzer controls, plus Save credentials, Write from file and Copy to infinity for data-block profiles. Advanced contains custom keys and the block editor. Gen1a cards use normal authenticated Classic mode; UID changes and key changes are not included.")
             helpItem("07", "Piswords UHF tags", "Open UHF Workspace, connect the reader and scan. Stop scanning, select one tag, then read memory or review an EPC change. The new EPC is verified by reading it back. Reader tools includes buzzer and RF power controls.")
-            helpItem("08", "Chameleon Ultra LF cards", "Open LF Workspace and connect over USB or Bluetooth. Scan a source card, then remove it and place one T5577 target to clone. Default and recovery tools restore an EM410x test ID. Password writes are disabled. Writing requires firmware with open block-write support; unsupported formats stay read-only. Each write is checked by reading the card back.")
+            helpItem("08", "Chameleon Ultra LF cards", "Connect over USB or Bluetooth using Chameleon Ultra in the sidebar, then open LF Workspace. Scan a source card, then remove it and place one T5577 target to clone. Default and recovery tools restore an EM410x test ID. Password writes are disabled. Writing requires firmware with open block-write support; unsupported formats stay read-only. Each write is checked by reading the card back.")
             Text("Copyright © 2026 Midwest Gadgets. Code: GNU GPL version 3. You may redistribute and modify it under GPLv3; there is no warranty. Branding has separate terms.").font(.caption).foregroundColor(.secondary)
             HStack {
                 if let license = Bundle.main.url(forResource:"LICENSE",withExtension:"txt") { Button("View GPLv3 license") { NSWorkspace.shared.open(license) } }
@@ -282,7 +289,7 @@ struct ContentView: View {
             }
             Text("macOS 13 or later · Apple silicon and Intel · No runtime dependencies")
                 .font(.system(size: 11)).foregroundColor(.secondary)
-        }.padding(24).background(.white).cornerRadius(12)
+        }.padding(24).background(AppTheme.surface).cornerRadius(12)
     }
     private func helpItem(_ number: String, _ title: String, _ text: String) -> some View {
         HStack(alignment: .top, spacing: 16) {

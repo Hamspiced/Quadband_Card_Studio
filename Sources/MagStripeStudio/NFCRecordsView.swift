@@ -3,7 +3,7 @@ import SwiftUI
 import AppKit
 import MagStripeCore
 
-private let hfAccent = Color(red: 0, green: 0.43, blue: 0.40)
+private let hfAccent = AppTheme.accent
 
 struct NFCRecordsReadView: View {
     @ObservedObject var model: NFCModel
@@ -27,7 +27,7 @@ struct NFCRecordsReadView: View {
                             GridRow { Text("Writable").foregroundColor(.secondary); Text(ndef.writable ? "Yes" : "Not with the available key") }
                         }
                     }.font(.system(size: 12))
-                }.padding(22).frame(maxWidth: .infinity, alignment: .leading).background(.white).cornerRadius(12)
+                }.padding(22).frame(maxWidth: .infinity, alignment: .leading).background(AppTheme.surface).cornerRadius(12)
                 if let ndef = model.ndef {
                     HStack {
                         Text("\(ndef.records.count) NFC RECORD\(ndef.records.count == 1 ? "" : "S")").font(.system(size: 10, weight: .semibold)).tracking(1.3)
@@ -40,14 +40,14 @@ struct NFCRecordsReadView: View {
                     }
                 } else {
                     Label(model.ndefMessage.isEmpty ? "Read the card to inspect its NFC records." : model.ndefMessage, systemImage: "info.circle")
-                        .font(.system(size: 12)).foregroundColor(.secondary).padding(18).frame(maxWidth: .infinity, alignment: .leading).background(.white).cornerRadius(10)
+                        .font(.system(size: 12)).foregroundColor(.secondary).padding(18).frame(maxWidth: .infinity, alignment: .leading).background(AppTheme.surface).cornerRadius(10)
                 }
             } else {
                 VStack(spacing: 16) {
                     Image(systemName: "sensor.tag.radiowaves.forward").font(.system(size: 44, weight: .light)).foregroundColor(hfAccent)
                     Text("Read a card's records").font(.system(size: 21, weight: .semibold))
                     Text("Place a card on your reader and click Read card.\nURLs, text and other NFC records appear here.").font(.system(size: 13)).foregroundColor(.secondary).multilineTextAlignment(.center)
-                }.padding(48).frame(maxWidth: .infinity).background(.white).cornerRadius(12)
+                }.padding(48).frame(maxWidth: .infinity).background(AppTheme.surface).cornerRadius(12)
             }
         }
     }
@@ -65,7 +65,7 @@ struct NFCRecordCard: View {
                 Text("\(record.payload.count) payload bytes").font(.system(size: 10)).foregroundColor(.secondary)
             }.frame(maxWidth: .infinity, alignment: .leading)
             Button("Copy") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(record.displayValue, forType: .string) }.controlSize(.small)
-        }.padding(20).background(.white).cornerRadius(12)
+        }.padding(20).background(AppTheme.surface).cornerRadius(12)
     }
 }
 
@@ -93,7 +93,7 @@ struct NFCRecordsWriteView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Choose a record type to get started.").font(.system(size: 16, weight: .medium))
                     Text("Text, links, contact details, Wi-Fi, Bluetooth, filament information and custom data.").font(.system(size: 12)).foregroundColor(.secondary)
-                }.padding(24).frame(maxWidth: .infinity, alignment: .leading).background(.white).cornerRadius(12)
+                }.padding(24).frame(maxWidth: .infinity, alignment: .leading).background(AppTheme.surface).cornerRadius(12)
             }
             ForEach(Array(model.recordQueue.enumerated()), id: \.element.id) { index, record in
                 VStack(spacing: 0) {
@@ -105,7 +105,7 @@ struct NFCRecordsWriteView: View {
                         Spacer()
                         Button("Remove") { model.recordQueue.remove(at: index) }
                     }.controlSize(.small).padding(.horizontal, 20).padding(.bottom, 16).disabled(model.busy)
-                }.background(.white).cornerRadius(12)
+                }.background(AppTheme.surface).cornerRadius(12)
             }
             HStack(alignment: .center, spacing: 18) {
                 VStack(alignment: .leading, spacing: 5) {
@@ -116,7 +116,7 @@ struct NFCRecordsWriteView: View {
                 Spacer()
                 Button("Write records & verify") { model.writeRecords() }.buttonStyle(.borderedProminent).controlSize(.large)
                     .disabled(model.busy || model.recordWriteError != nil)
-            }.padding(20).background(.white).cornerRadius(12)
+            }.padding(20).background(AppTheme.surface).cornerRadius(12)
         }
         .sheet(item: $editor) { request in
             NFCRecordEditor(record: request.record) { record in
@@ -188,6 +188,6 @@ struct NFCRecordEditor: View {
                     .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
                     .disabled({ if case .failure = result { return true }; return false }())
             }
-        }.padding(28).frame(width: 560, height: 590).background(Color(nsColor: .windowBackgroundColor)).preferredColorScheme(.light)
+        }.padding(28).frame(width: 560, height: 590).background(Color(nsColor: .windowBackgroundColor))
     }
 }

@@ -4,8 +4,8 @@ import MagStripeCore
 
 struct NFCView: View {
     @ObservedObject var model: NFCModel
-    private let accent = Color(red: 0, green: 0.43, blue: 0.40)
-    private let field = Color(red: 0.96, green: 0.97, blue: 0.98)
+    private let accent = AppTheme.accent
+    private let field = AppTheme.canvas
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             HStack(spacing: 12) {
@@ -41,20 +41,20 @@ struct NFCView: View {
                 Button("Refresh readers") { model.refresh() }
             }
             if model.readers.isEmpty {
-                Text("Connect an ACS reader, or connect your Chameleon in LF Workspace, then refresh.").font(.system(size: 12)).foregroundColor(.secondary)
+                Text("Connect an ACS reader, or connect your Chameleon in the sidebar, then refresh.").font(.system(size: 12)).foregroundColor(.secondary)
             } else {
                 Picker("Reader", selection: $model.selectedReader) {
                     ForEach(model.readers, id: \.self) { Text($0).tag($0) }
                 }.onChange(of: model.selectedReader) { _ in model.readerChanged() }
             }
-            Text("Chameleon Ultra shares its USB or Bluetooth connection from LF Workspace. Connect there, then refresh and select it here.").font(.caption).foregroundColor(.secondary)
+            Text("Chameleon Ultra shares its USB or Bluetooth connection from the sidebar. Connect there, then refresh and select it here.").font(.caption).foregroundColor(.secondary)
             HStack {
                 Text(model.automaticKeys ? "Place a card on the reader. Standard NFC keys are handled automatically." : "Using the custom key from Advanced. Turn on automatic keys there for standard NFC cards.")
                     .font(.system(size: 11)).foregroundColor(.secondary)
                 Spacer()
                 Button("Read card") { model.readRecords() }.buttonStyle(.borderedProminent).disabled(model.selectedReader.isEmpty)
             }
-        }.padding(20).background(.white).cornerRadius(12).disabled(model.busy)
+        }.padding(20).background(AppTheme.surface).cornerRadius(12).disabled(model.busy)
     }
     private var authentication: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -76,7 +76,7 @@ struct NFCView: View {
                 Text(snapshot.card.atqa.map { "ATQA: " + HexBytes.string($0) + " · SAK: " + String(format:"%02X",snapshot.card.sak ?? 0) } ?? ("ATR: " + HexBytes.string(snapshot.card.atr))).font(.system(size: 10, design: .monospaced)).textSelection(.enabled)
             }
             Text("Keys are tried only from the standard NFC/MAD keys, factory key and the key you enter. No key recovery is performed.").font(.system(size: 10)).foregroundColor(.secondary)
-        }.padding(20).background(.white).cornerRadius(12).disabled(model.busy)
+        }.padding(20).background(AppTheme.surface).cornerRadius(12).disabled(model.busy)
     }
 
     private var memory: some View {
@@ -120,7 +120,7 @@ struct NFCView: View {
             }
             Text("Keys in sector trailers are masked or restricted by the card. These read results are not a complete key backup.")
                 .font(.system(size: 10)).foregroundColor(.secondary)
-        }.padding(20).background(.white).cornerRadius(12).disabled(model.busy)
+        }.padding(20).background(AppTheme.surface).cornerRadius(12).disabled(model.busy)
     }
     private var editor: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -144,6 +144,6 @@ struct NFCView: View {
                 Text("Manufacturer data and sector trailers are read-only here. Gen1a UID-changing commands are not included.")
                     .font(.system(size: 12)).foregroundColor(.secondary)
             }
-        }.padding(20).background(.white).cornerRadius(12).disabled(model.busy)
+        }.padding(20).background(AppTheme.surface).cornerRadius(12).disabled(model.busy)
     }
 }

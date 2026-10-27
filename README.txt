@@ -1,11 +1,18 @@
 # Quadband Card Studio by Midwest Gadgets
 
-**Version 1.0.0 — macOS, Windows and Linux source. GPL-3.0-only.**
+**Version 1.0.1 — macOS, Windows and Linux source. GPL-3.0-only.**
 
 - **macOS:** native SwiftUI application; build with `bash scripts/build-app.sh`.
 - **Windows / Linux:** shared desktop application in [desktop/](desktop/README.txt), with USB HID, serial, PC/SC and Bluetooth adapters.
 - **Publishable source:** `python3 scripts/source-archive.py` creates a source archive with all original application code, tests, resources, build scripts and CI. See [release instructions](docs/RELEASING.txt), [validation](docs/VALIDATION.txt), [third-party notices](THIRD_PARTY.txt) and [branding terms](BRANDING.txt).
 - **T5577:** password writes are disabled in every version. Open block writing requires compatible firmware; see [password-free policy](docs/T5577.txt). No password controls remain in the UI.
+
+## V1.01 updates
+
+- Choose System, Light or Dark under Appearance in the sidebar; the choice is saved across launches.
+- The sidebar logo is larger and uses high-quality, display-density-aware rendering.
+- UHF Workspace is the first contactless option, followed by HF and LF.
+- Chameleon Ultra USB/Bluetooth connection controls are below the magstripe connection in the sidebar and share one connection across HF and LF workspaces.
 
 The Windows/Linux implementations are source ports with native packaging jobs, not a claim that physical readers or target-OS binaries have been validated from this Mac. The sections below describe the native Mac workflows; the portable guide documents its setup and differences.
 
@@ -13,7 +20,7 @@ The Windows/Linux implementations are source ports with native packaging jobs, n
 
 Credit to **Tototo31 and Ashsh from the Dangerous Things community** for their work on the ACR122/ACR1552 scripts and reader-configuration research that informed these tools. RF preset references: https://forum.dangerousthings.com/t/acr1552u-change-rf-power-level-duty-cycle/28545 . The supplied reference script is not redistributed; the application uses independent implementations of documented ACS commands. See THIRD_PARTY.txt for attribution and licensing details.
 
-Native macOS app for MSR X6 magnetic-stripe writing over USB or Bluetooth, MSR605 serial read/write, MSR600 keyboard reading, MIFARE Classic 1K NFC records with ACS PC/SC readers or Chameleon Ultra, Piswords UHF2 tag scanning and memory/EPC editing, and Chameleon Ultra LF reading/T5577 writing over USB or Bluetooth. Includes the supplied Midwest Gadgets logo. The sidebar groups **Magstripe Write** and **Magstripe Read**, with **HF Workspace** for NFC and **UHF Workspace** for UHF tags, and **LF Workspace** for Chameleon connections and LF cards. SwiftUI, IOKit, CoreBluetooth and the system PC/SC framework; no third-party runtime dependencies.
+Native macOS app for MSR X6 magnetic-stripe writing over USB or Bluetooth, MSR605 serial read/write, MSR600 keyboard reading, MIFARE Classic 1K NFC records with ACS PC/SC readers or Chameleon Ultra, Piswords UHF2 tag scanning and memory/EPC editing, and Chameleon Ultra LF reading/T5577 writing over USB or Bluetooth. Includes the supplied Midwest Gadgets logo. The sidebar groups **Magstripe Write** and **Magstripe Read**, with **HF Workspace** for NFC and **UHF Workspace** for UHF tags, and **LF Workspace** for LF cards; shared Chameleon connection controls are in the sidebar. SwiftUI, IOKit, CoreBluetooth and the system PC/SC framework; no third-party runtime dependencies.
 
 ## Open the app
 
@@ -155,7 +162,7 @@ Opt-in hardware checks are available by running tests with `QUADBAND_UHF_TEST_PO
 
 ## Chameleon Ultra · LF and HF (v2.0 password-free writes)
 
-**LF Workspace** connects a Chameleon Ultra over USB (115200 baud) or Bluetooth (Nordic UART). Choose the device and connect; Bluetooth pairing, when enabled on the Chameleon, is handled by macOS using your configured PIN. Close competing Chameleon apps before connecting. In v1.6.1 the app first reads the firmware’s protected Bluetooth battery characteristic before subscribing to its UART, allowing macOS to initiate pairing through an authenticated GATT read. It allows up to 90 seconds for setup/PIN entry, supports firmware without that battery service, and never disables pairing or clears bonds automatically. If the device battery is low, keep USB connected for power. Official 2.x firmware is checked at connection time, and the reported command capabilities determine available formats. Chameleon Lite lacks reader hardware and is rejected.
+The **Chameleon Ultra sidebar panel** connects a Chameleon Ultra over USB (115200 baud) or Bluetooth (Nordic UART). Choose the device and connect; Bluetooth pairing, when enabled on the Chameleon, is handled by macOS using your configured PIN. Close competing Chameleon apps before connecting. In v1.6.1 the app first reads the firmware’s protected Bluetooth battery characteristic before subscribing to its UART, allowing macOS to initiate pairing through an authenticated GATT read. It allows up to 90 seconds for setup/PIN entry, supports firmware without that battery service, and never disables pairing or clears bonds automatically. If the device battery is low, keep USB connected for power. Official 2.x firmware is checked at connection time, and the reported command capabilities determine available formats. Chameleon Lite lacks reader hardware and is rejected.
 
 - **Scan & read:** automatically tries the available LF formats, or scans a selected type. EM410x, HID Prox and Viking are available on the connected 2.1 firmware. Newer firmware may additionally expose Electra, ioProx, PAC/Stanley, Jablotron and Pyramid; Pyramid is read-only. HID has a format hint selector when automatic detection is ambiguous. Reading captures the transmitted identity, not a full T5577 memory dump.
 - **Clone card:** scan a source (or open a `.qlf` file), remove it, place one writable T5577 target, and review the write. Source/target selection is physical; leave only the target at the antenna.
@@ -164,7 +171,7 @@ Opt-in hardware checks are available by running tests with `QUADBAND_UHF_TEST_PO
 - **No T5577 passwords:** the app rejects legacy firmware commands that set passwords. Only command 3016 open writes are used, with no authentication, no password-block writes and the PWD bit off. Firmware without this command cannot write LF tags. Password-free encoders cover EM410x, Electra, Viking, ioProx, PAC and Jablotron. HID Prox and Pyramid remain scan/save only. Password-protected targets cannot be recovered by this path. LF files contain format/ID only. See [the implementation policy](docs/T5577.txt).
 - **Verification:** an acknowledgement alone never counts as success. The app scans again and compares the identity/format. Timeout or malformed responses close the connection; writes are not automatically retried. Cancel cannot undo an already transmitted write. Normal Disconnect restores the device mode observed at connection; abrupt unplug/quit may leave reader mode active.
 
-To use the same connection for **HF**, connect in LF Workspace, open **HF Workspace**, refresh readers, and select **Chameleon Ultra · USB** or **Chameleon Ultra · Bluetooth**. The existing NFC record editor, Advanced data-block editor, `.qcard` files, and Copy to infinity work with **MIFARE Classic 1K**, including Gen1a in normal authenticated mode. Only data blocks are written; UID/manufacturer blocks, sector trailers, access bits and keys remain unchanged. NDEF writes require an already formatted Classic 1K card. Other ISO14443-A cards can be identified; their memory formats are not supported by this editor. ACS configuration controls are shown only for ACS readers.
+To use the same connection for **HF**, connect in the Chameleon Ultra sidebar panel, open **HF Workspace**, refresh readers, and select **Chameleon Ultra · USB** or **Chameleon Ultra · Bluetooth**. The existing NFC record editor, Advanced data-block editor, `.qcard` files, and Copy to infinity work with **MIFARE Classic 1K**, including Gen1a in normal authenticated mode. Only data blocks are written; UID/manufacturer blocks, sector trailers, access bits and keys remain unchanged. NDEF writes require an already formatted Classic 1K card. Other ISO14443-A cards can be identified; their memory formats are not supported by this editor. ACS configuration controls are shown only for ACS readers.
 
 HF and LF operations share an exclusive connection, including during bulk-copy waits. HF writes check identity, stale data, keys and access conditions, then read back the result. NFC record writes publish the message length last. `.qlf` identity files and `.qcard` HF data files are deliberately different formats.
 

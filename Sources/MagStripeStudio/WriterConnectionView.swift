@@ -9,7 +9,7 @@ struct BrandLogo: View {
         return NSImage(contentsOf: url)
     }
     var body: some View {
-        if let logo { Image(nsImage: logo).resizable().scaledToFit().accessibilityLabel("Midwest Gadgets logo") }
+        if let logo { Image(nsImage: logo).resizable().interpolation(.high).antialiased(true).scaledToFit().accessibilityLabel("Midwest Gadgets logo") }
     }
 }
 

@@ -4,7 +4,7 @@ import MagStripeCore
 
 struct UHFView: View {
     @ObservedObject var model: UHFModel
-    private let accent = Color(red:0,green:0.43,blue:0.40)
+    private let accent = AppTheme.accent
     var body: some View {
         VStack(alignment:.leading,spacing:20) {
             HStack(spacing:12) {
@@ -23,7 +23,7 @@ struct UHFView: View {
             if !model.log.isEmpty {
                 DisclosureGroup("Activity") {
                     VStack(alignment:.leading,spacing:6) { ForEach(Array(model.log.prefix(12).enumerated()),id:\.offset) { _,text in Text(text).font(.system(size:10)).textSelection(.enabled) } }.frame(maxWidth:.infinity,alignment:.leading).padding(.top,8)
-                }.padding(18).background(.white).cornerRadius(12)
+                }.padding(18).background(AppTheme.surface).cornerRadius(12)
             }
         }
         .onAppear { if model.autoDiscovery && model.ports.isEmpty && !model.busy { model.refresh() } }
@@ -57,7 +57,7 @@ struct UHFView: View {
             }.disabled(model.busy)
             if !model.version.isEmpty { Text(model.version).font(.system(size:13,weight:.medium)); Text(model.details).font(.caption).foregroundColor(.secondary) }
             Text("UHF / EPC Gen2 tags use this workspace. NFC and MIFARE cards use HF Workspace.").font(.caption).foregroundColor(.secondary)
-        }.padding(20).background(.white).cornerRadius(12)
+        }.padding(20).background(AppTheme.surface).cornerRadius(12)
     }
     private var inventory: some View {
         VStack(alignment:.leading,spacing:14) {
@@ -89,7 +89,7 @@ struct UHFView: View {
                     }
                 }.frame(maxHeight:240)
             }
-        }.padding(20).background(.white).cornerRadius(12)
+        }.padding(20).background(AppTheme.surface).cornerRadius(12)
     }
     private func epcEditor(_ tag: UHFTag) -> some View {
         VStack(alignment:.leading,spacing:12) {
@@ -101,7 +101,7 @@ struct UHFView: View {
                 Spacer()
                 Button("Review EPC change") { model.prepareWrite(epc:true) }.buttonStyle(.borderedProminent)
             }
-        }.padding(20).background(.white).cornerRadius(12).disabled(!model.canOperate)
+        }.padding(20).background(AppTheme.surface).cornerRadius(12).disabled(!model.canOperate)
     }
     private var memoryEditor: some View {
         VStack(alignment:.leading,spacing:14) {
@@ -130,7 +130,7 @@ struct UHFView: View {
                     Button("Review User-memory write") { model.prepareWrite(epc:false) }
                 }.padding(.top,10).disabled(!model.canOperate)
             }
-        }.padding(20).background(.white).cornerRadius(12)
+        }.padding(20).background(AppTheme.surface).cornerRadius(12)
     }
     private var readerTools: some View {
         DisclosureGroup("Reader tools") {
@@ -139,6 +139,6 @@ struct UHFView: View {
                 HStack { Stepper("RF power: \(model.power) dBm",value:$model.power,in:0...30); Spacer(); Button("Apply power") { model.applyPower() } }
                 Text("The reader reports unsupported power settings as an error. Its current frequency region is retained.").font(.caption).foregroundColor(.secondary)
             }.padding(.top,14).disabled(!model.canOperate)
-        }.padding(20).background(.white).cornerRadius(12)
+        }.padding(20).background(AppTheme.surface).cornerRadius(12)
     }
 }

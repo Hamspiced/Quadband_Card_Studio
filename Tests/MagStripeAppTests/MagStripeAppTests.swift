@@ -22,6 +22,31 @@ final class MagStripeAppTests: XCTestCase {
         XCTAssertEqual(model.drafts, ["", "", ""])
         XCTAssertTrue(model.log.isEmpty)
     }
+    @MainActor func testRenderSidebarChameleonConnections() throws {
+        _ = NSApplication.shared
+        let model = AppModel(scanDevices: false)
+        let output = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent(".build/ui-checks")
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        for link in LFModel.Link.allCases {
+            model.lf.link = link
+            let host = NSHostingView(rootView: ChameleonConnectionView(model: model.lf, bluetooth: model.lf.bluetooth)
+                .padding(22).foregroundColor(.white).background(Color.black).environment(\.colorScheme, .dark))
+            host.frame = NSRect(x: 0, y: 0, width: 242, height: 500)
+            let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
+            window.contentView = host
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let data = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            XCTAssertGreaterThan(data.count, 1000)
+            try data.write(to: output.appendingPathComponent("chameleon-sidebar-\(link.rawValue.lowercased()).png"))
+            window.contentView = nil
+        }
+        model.lf.hfWorkflowBusy = true
+        model.lf.connect()
+        XCTAssertFalse(model.lf.busy)
+        XCTAssertFalse(model.lf.connected)
+    }
 
     @MainActor func testUnmarkedSwipeCanBeReassignedWithoutAnotherSwipe() {
         let model = AppModel(scanDevices: false)
@@ -100,7 +125,7 @@ final class MagStripeAppTests: XCTestCase {
         let model = AppModel(scanDevices: false)
         let output = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent(".build/ui-checks")
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
-        for page in [AppModel.AppPage.write, .read, .nfc, .help] {
+        for page in [AppModel.AppPage.write, .read, .uhf, .nfc, .lf, .help] {
             model.selectedPage = page
             if page == .read {
                 model.armKeyboard()
@@ -127,8 +152,49 @@ final class MagStripeAppTests: XCTestCase {
             host.cacheDisplay(in: host.bounds, to: bitmap)
             let data = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
             XCTAssertGreaterThan(data.count, 5000)
-            try data.write(to: output.appendingPathComponent("\(page == .write ? "write" : page == .read ? "read" : page == .nfc ? "nfc" : "help").png"))
+            try data.write(to: output.appendingPathComponent("\(page.rawValue.replacingOccurrences(of: " ", with: "-").lowercased()).png"))
             window.contentView = nil
+        }
+    }
+
+    @MainActor func testAppearanceModesAndWorkspaceRendering() throws {
+        XCTAssertNil(AppearanceMode.system.colorScheme)
+        XCTAssertEqual(AppearanceMode.light.colorScheme, .light)
+        XCTAssertEqual(AppearanceMode.dark.colorScheme, .dark)
+        _ = NSApplication.shared
+        let suite = "QuadbandThemeTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(scanDevices: false)
+        let output = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent(".build/ui-checks")
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        for mode in [AppearanceMode.light, .dark] {
+            defaults.set(mode.rawValue, forKey: "appearance")
+            for page in AppModel.AppPage.allCases {
+                model.selectedPage = page
+                let host = NSHostingView(rootView: ContentView().environmentObject(model).defaultAppStorage(defaults))
+                host.frame = NSRect(x: 0, y: 0, width: 1180, height: 1000)
+                let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
+                window.appearance = NSAppearance(named: mode == .dark ? .darkAqua : .aqua)
+                window.contentView = host
+                host.layoutSubtreeIfNeeded()
+                RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+                host.layoutSubtreeIfNeeded()
+                let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                let data = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                XCTAssertGreaterThan(data.count, 5000)
+                let name = "\(mode.rawValue)-\(page.rawValue)".replacingOccurrences(of: " ", with: "-").lowercased()
+                try data.write(to: output.appendingPathComponent(name + ".png"))
+                window.contentView = nil
+            }
+            let editor = NSHostingView(rootView: NFCRecordEditor(initialKind: .wifi) { _ in }
+                .environment(\.colorScheme, mode.colorScheme!))
+            editor.frame = NSRect(x: 0, y: 0, width: 616, height: 646)
+            let bitmap = try XCTUnwrap(editor.bitmapImageRepForCachingDisplay(in: editor.bounds))
+            editor.cacheDisplay(in: editor.bounds, to: bitmap)
+            try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                .write(to: output.appendingPathComponent("editor-\(mode.rawValue.lowercased()).png"))
         }
     }
 
