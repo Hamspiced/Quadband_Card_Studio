@@ -93,7 +93,7 @@ struct ContentView: View {
                     .font(.system(size: 12)).foregroundColor(.secondary)
             }
             Spacer()
-            Text(model.selectedPage == .nfc ? "ACS · CHAMELEON" : model.selectedPage == .uhf ? "PISWORDS · UHF" : model.selectedPage == .lf ? "CHAMELEON · LF" : "X6 · MSR600 · MSR605").font(.system(size: 10, weight: .semibold, design: .monospaced)).foregroundColor(teal)
+            Text(model.selectedPage == .nfc ? "ACS · CHAMELEON" : model.selectedPage == .uhf ? "PISWORDS · M100 · UHF" : model.selectedPage == .lf ? "CHAMELEON · LF" : "X6 · MSR600 · MSR605").font(.system(size: 10, weight: .semibold, design: .monospaced)).foregroundColor(teal)
                 .padding(.horizontal, 10).padding(.vertical, 7).background(teal.opacity(0.07)).clipShape(Capsule())
         }.padding(.horizontal, 28).padding(.vertical, 24).background(AppTheme.surface)
     }
@@ -280,7 +280,7 @@ struct ContentView: View {
             helpItem("04", "Use the MSR600 reader", "Use its USB keyboard mode. Sentinels are optional: choose the track order under Input format when your reader omits them. On Magstripe Read, choose MSR600 and click Start reading. Track 3 may start with + or a second semicolon. Use a US keyboard input source if punctuation comes through incorrectly.")
             helpItem("05", "Read and write NFC records", "Choose HF Workspace and place your Classic 1K card on the ACS reader. Read card handles standard NFC keys automatically and shows URLs, text and other records. Under Write records, add records or use the current ones, then Write records & verify. The card must already be NFC-formatted. UID and keys stay unchanged.")
             helpItem("06", "HF tools and advanced settings", "Tools contains ACR122U/1552U reader settings and buzzer controls, plus Save credentials, Write from file and Copy to infinity for data-block profiles. Advanced contains custom keys and the block editor. Gen1a cards use normal authenticated Classic mode; UID changes and key changes are not included.")
-            helpItem("07", "Piswords UHF tags", "Open UHF Workspace, connect the reader and scan. Stop scanning, select one tag, then read memory or review an EPC change. The new EPC is verified by reading it back. Reader tools includes buzzer and RF power controls.")
+            helpItem("07", "USB-serial UHF readers", "Open UHF Workspace and choose Piswords UHF2, M5Stack JRD-4035 or YRM100. The M5Stack/YRM100 modules need a suitable USB-TTL adapter and module power, normally at 115200 baud. Connect and scan. Stop scanning before memory operations. EPC and User-memory writes are read-back verified. Buzzer controls apply only to Piswords; module power controls use 18–26 dBm.")
             helpItem("08", "Chameleon Ultra LF cards", "Connect over USB or Bluetooth using Chameleon Ultra in the sidebar, then open LF Workspace. Scan a source card, then remove it and place one T5577 target to clone. Default and recovery tools restore an EM410x test ID. Password writes are disabled. Writing requires firmware with open block-write support; unsupported formats stay read-only. Each write is checked by reading the card back.")
             Text("Copyright © 2026 Midwest Gadgets. Code: GNU GPL version 3. You may redistribute and modify it under GPLv3; there is no warranty. Branding has separate terms.").font(.caption).foregroundColor(.secondary)
             HStack {

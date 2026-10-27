@@ -25,7 +25,7 @@ python3 -m venv .venv
 .venv/bin/quadband-card-studio
 ```
 
-A Python wheel/source tarball can also be installed with `python -m pip install path/to/quadband_card_studio-1.0.1-py3-none-any.whl`; pip resolves platform dependencies. These Python packages are **not standalone Windows/Linux executables**.
+A Python wheel/source tarball can also be installed with `python -m pip install path/to/quadband_card_studio-1.0.2-py3-none-any.whl`; pip resolves platform dependencies. These Python packages are **not standalone Windows/Linux executables**.
 
 ## Readers and workspaces
 
@@ -33,10 +33,12 @@ A Python wheel/source tarball can also be installed with `python -m pip install 
 | --- | --- |
 | Magstripe Write / Read | MSR X6 HID or FF00 Bluetooth; MSR605 serial; MSR605X HID; MSR600 focused keyboard input, including configured sentinel-free field mappings |
 | HF Workspace | ACS PC/SC, including ACR122U/ACR1552U; connected Chameleon Ultra; Classic 1K identity, automatic standard keys, 19 NDEF record types, data-block editing, `.qcard` files and Copy to infinity |
-| UHF Workspace | Piswords UHF2/UCM60x serial, inventory/CSV, memory reads, verified User-memory writes and EPC changes; buzzer and RF power |
+| UHF Workspace | Piswords UHF2/UCM60x, M5Stack JRD-4035 and YRM100 over USB serial; inventory/CSV, memory reads, verified User-memory writes and EPC changes; profile-specific RF power and Piswords-only buzzer |
 | LF Workspace | Chameleon Ultra USB or Nordic UART Bluetooth, firmware capability checks, LF scans, `.qlf` files; **password-free** T5577 writes on firmware exposing command 3016 |
 
 Choose the serial device explicitly. Piswords usually uses 9600 baud, address 0; MSR605 usually uses 9600; Chameleon uses 115200. Close other reader utilities before connecting. The portable UI offers explicit baud selection; the native Mac UHF workspace also has automatic baud detection.
+
+JRD-4035/YRM100: choose the matching Reader profile, use a USB-TTL adapter and select its port. Profiles default to 115200 baud, 8N1; older M100 firmware may need 9600. Match the module's UART logic voltage, cross TX/RX, share ground and provide suitable RF-module power. These profiles have no address byte or documented buzzer command. They support 16-bit word addresses, 64-word reads, 32-word writes and exact PC-plus-EPC memory selection for EPCs up to 28 bytes. Power controls are conservatively limited to 18–26 dBm; region/channel settings remain unchanged. Module tag reports include signed RSSI but not frequency. See the main README for wiring and limitations. Physical module operation remains unverified.
 
 HF record writes require an already NFC-formatted **MIFARE Classic 1K**. This release does not format factory-blank cards or edit UID, keys or trailers. Other HF cards can be identified, not edited. A `.qcard` is a data-only 47-block profile, not a full credential/UID/key clone. A data copy does not configure NDEF sector keys. `.qcard` and `.qlf` use the same schemas as the Mac app.
 

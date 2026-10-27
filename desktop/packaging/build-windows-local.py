@@ -240,7 +240,7 @@ def main():
             shutil.copyfile(ROOT / name, folder / name)
         shutil.copyfile(ROOT / 'desktop/README.txt', folder / 'READER-SETUP.txt')
         (folder / 'START-HERE.txt').write_text(
-            'Quadband Card Studio 1.0.1 by Midwest Gadgets\n\n'
+            'Quadband Card Studio 1.0.2 by Midwest Gadgets\n\n'
             'Windows 11 x64 portable application.\n'
             '1. Extract ALL files from this ZIP to a local folder.\n'
             '2. Open QuadbandCardStudio.exe. No Python installation is required.\n'
@@ -255,7 +255,7 @@ def main():
             'Third-party runtime source provision before public binary release: THIRD_PARTY.txt and docs/RELEASING.txt in source.\n',
             encoding='utf-8')
         (folder / 'dependencies.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
-        (folder / 'BUILD-INFO.json').write_text(json.dumps({'app_version': '1.0.1', 'target': 'Windows x64',
+        (folder / 'BUILD-INFO.json').write_text(json.dumps({'app_version': '1.0.2', 'target': 'Windows x64',
             'runtime': {'python': PYTHON, 'url': url, 'sha256': PYTHON_SHA}, 'launcher_compiler': 'Zig 0.17.0',
             'method': 'local cross-compiled launcher and official Windows runtime/wheels',
             'windows_execution_verified': False, 'hardware_verified': False}, indent=2), encoding='utf-8')
@@ -276,7 +276,7 @@ def main():
         manifest = '\n'.join(hashlib.sha256(p.read_bytes()).hexdigest() + '  ' + p.relative_to(folder).as_posix()
                              for p in sorted(folder.rglob('*')) if p.is_file()) + '\n'
         (folder / 'SHA256SUMS.txt').write_text(manifest, encoding='utf-8')
-        archive = shutil.make_archive(str(output / 'Quadband-Card-Studio-1.0.1-Windows-x64'), 'zip',
+        archive = shutil.make_archive(str(output / 'Quadband-Card-Studio-1.0.2-Windows-x64'), 'zip',
                                       root_dir=folder.parent, base_dir=folder.name)
         checksum = hashlib.sha256(Path(archive).read_bytes()).hexdigest()
         Path(archive + '.sha256').write_text(checksum + '  ' + Path(archive).name + '\n', encoding='utf-8')

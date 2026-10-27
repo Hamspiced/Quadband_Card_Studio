@@ -42,21 +42,29 @@ struct UHFView: View {
     }
     private var connection: some View {
         VStack(alignment:.leading,spacing:14) {
-            HStack { Label("PISWORDS UHF READER",systemImage:"cable.connector").font(.system(size:11,weight:.semibold)); Spacer(); Button("Refresh") { model.refresh() }.disabled(model.connected || model.busy) }
-            if model.ports.isEmpty { Text("Connect the Piswords USB reader, then refresh. USB serial connections are supported.").font(.callout).foregroundColor(.secondary) }
+            HStack { Label("UHF READER · USB SERIAL",systemImage:"cable.connector").font(.system(size:11,weight:.semibold)); Spacer(); Button("Refresh") { model.refresh() }.disabled(model.connected || model.busy) }
+            Picker("Reader profile", selection: $model.profile) {
+                ForEach(UHFReaderProfile.allCases) { Text($0.rawValue).tag($0) }
+            }.disabled(model.connected || model.busy).onChange(of: model.profile) { _ in model.profileChanged() }
+            if model.ports.isEmpty { Text("Connect your reader or USB-TTL serial adapter, then refresh.").font(.callout).foregroundColor(.secondary) }
             else { Picker("Reader",selection:$model.selectedPort) { ForEach(model.ports) { Text($0.label).tag($0.path) } }.disabled(model.connected || model.busy) }
             HStack(spacing:16) {
                 Picker("Baud rate",selection:$model.baud) {
                     Text("Detect automatically").tag(0)
                     ForEach([9600,19200,38400,57600,115200,230400],id:\.self) { Text(String($0)).tag($0) }
                 }.frame(width:245).disabled(model.connected)
-                TextField("Address",text:$model.address).textFieldStyle(.roundedBorder).frame(width:75).help("Reader address, usually 0").disabled(model.connected)
+                if !model.profile.isM100 {
+                    TextField("Address",text:$model.address).textFieldStyle(.roundedBorder).frame(width:75).help("Reader address, usually 0").disabled(model.connected)
+                }
                 Spacer()
                 Button(model.connected ? "Disconnect" : "Connect") { if model.connected { model.disconnect() } else { model.connect() } }
                     .buttonStyle(.borderedProminent).disabled(model.busy || (!model.connected && model.selectedPort.isEmpty))
             }.disabled(model.busy)
             if !model.version.isEmpty { Text(model.version).font(.system(size:13,weight:.medium)); Text(model.details).font(.caption).foregroundColor(.secondary) }
             Text("UHF / EPC Gen2 tags use this workspace. NFC and MIFARE cards use HF Workspace.").font(.caption).foregroundColor(.secondary)
+            if model.profile.isM100 {
+                Text("USB-TTL adapter · normally 115200 baud, 8N1. Supply suitable module power and confirm logic voltage; cross TX/RX and share ground. Exact memory selection supports EPCs up to 28 bytes; writes support up to 32 words. Longer EPCs remain inventory-only.").font(.caption).foregroundColor(.secondary)
+            }
         }.padding(20).background(AppTheme.surface).cornerRadius(12)
     }
     private var inventory: some View {
@@ -78,7 +86,7 @@ struct UHFView: View {
                                 HStack(alignment:.top) {
                                     VStack(alignment:.leading,spacing:5) {
                                         Text(tag.id).font(.system(size:12,weight:.medium,design:.monospaced)).fixedSize(horizontal:false,vertical:true)
-                                        Text("Antenna \(tag.antenna) · \(String(format:"%.3f",Double(tag.frequencyKHz)/1000)) MHz" + (tag.signal.map { " · \($0) dBm" } ?? "")).font(.caption).foregroundColor(.secondary)
+                                        Text("Antenna \(tag.antenna) · " + (tag.frequencyKHz > 0 ? String(format:"%.3f MHz",Double(tag.frequencyKHz)/1000) : "Frequency not reported") + (tag.signal.map { " · \($0) dBm" } ?? "")).font(.caption).foregroundColor(.secondary)
                                     }
                                     Spacer()
                                     Text("\(tag.sightings) reads").font(.caption).foregroundColor(.secondary)
@@ -97,7 +105,7 @@ struct UHFView: View {
             Text("Current: \(tag.id)").font(.system(size:11,design:.monospaced)).textSelection(.enabled)
             TextField("New EPC in hexadecimal",text:$model.newEPC).textFieldStyle(.roundedBorder).font(.system(size:13,design:.monospaced))
             HStack {
-                Text("2–62 bytes, in complete two-byte words. The tag must support the requested length.").font(.caption).foregroundColor(.secondary)
+                Text("2–\(model.profile.maxEPCBytes) bytes, in complete two-byte words. The tag must support the requested length.").font(.caption).foregroundColor(.secondary)
                 Spacer()
                 Button("Review EPC change") { model.prepareWrite(epc:true) }.buttonStyle(.borderedProminent)
             }
@@ -135,8 +143,12 @@ struct UHFView: View {
     private var readerTools: some View {
         DisclosureGroup("Reader tools") {
             VStack(alignment:.leading,spacing:14) {
-                HStack { Text("Buzzer"); Spacer(); Button("Off") { model.setBuzzer(false) }; Button("On") { model.setBuzzer(true) } }
-                HStack { Stepper("RF power: \(model.power) dBm",value:$model.power,in:0...30); Spacer(); Button("Apply power") { model.applyPower() } }
+                if !model.profile.isM100 {
+                    HStack { Text("Buzzer"); Spacer(); Button("Off") { model.setBuzzer(false) }; Button("On") { model.setBuzzer(true) } }
+                } else {
+                    Text("No documented module buzzer control. Power controls use a conservative 18–26 dBm range.").font(.caption).foregroundColor(.secondary)
+                }
+                HStack { Stepper("RF power: \(model.power) dBm",value:$model.power,in:model.profile.powerRange); Spacer(); Button("Apply power") { model.applyPower() } }
                 Text("The reader reports unsupported power settings as an error. Its current frequency region is retained.").font(.caption).foregroundColor(.secondary)
             }.padding(.top,14).disabled(!model.canOperate)
         }.padding(20).background(AppTheme.surface).cornerRadius(12)

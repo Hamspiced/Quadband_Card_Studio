@@ -141,6 +141,7 @@ public enum UHFProtocol {
 
 @MainActor public final class UHFClient {
     public let transport: any UHFTransport
+    public var onInventoryError: ((Error) -> Void)?
     public init(transport: any UHFTransport) { self.transport = transport }
     public func command(_ command: UInt8, _ data: [UInt8] = []) async throws -> [UInt8] { try await transport.exchange(command,data:data,timeout:3) }
     public func select(_ epc: [UInt8]) async throws {

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "quadband-card-studio"
-version = "1.0.1"
+version = "1.0.2"
 description = "Magstripe, HF, UHF and LF card workspaces by Midwest Gadgets"
 readme = "README.txt"
 requires-python = ">=3.11,<3.15"

@@ -1,10 +1,10 @@
-# Validation status — 1.0.1
+# Validation status — 1.0.2
 
 ## Automated checks
 
-The shared Python implementation passed 93 automated tests (two optional hardware tests skipped in the ordinary run) and was tested on macOS with Python 3.12 and Qt/PySide6 6.12.0. Its tests cover protocol framing, delayed/fragmented responses, device failures, 19 record types, Classic memory protection, NDEF length-last commit, profile interoperability, batch removal/failure handling, EPC control-bit preservation and no automatic write retries. Password-free T5577 tests reject legacy password writers, block 7, PWD-enabled configurations, authenticated writes and page-1 writes. Adapter tests exercise PC/SC transaction cleanup and authentication, serial loopback, and BLE pairing order, chunking and failure cleanup. UI tests construct all workspaces and record forms and clear session data.
+The shared Python implementation passed 114 automated tests (two optional hardware tests skipped in the ordinary run) and was tested on macOS with Python 3.12 and Qt/PySide6 6.12.0. Its tests cover protocol framing, delayed/fragmented responses, device failures, 19 record types, Classic memory protection, NDEF length-last commit, profile interoperability, batch removal/failure handling, EPC control-bit preservation and no automatic write retries. Password-free T5577 tests reject legacy password writers, block 7, PWD-enabled configurations, authenticated writes and page-1 writes. Adapter tests exercise PC/SC transaction cleanup and authentication, serial loopback, and BLE pairing order, chunking and failure cleanup. UI tests construct all workspaces and record forms and clear session data.
 
-The native Swift application passed 89 automated tests, with five optional hardware tests skipped (94 total). It has its own core, transport, workflow and rendered-view tests. Hardware tests are opt-in. Physical card writes are not part of normal test runs. See build logs/test results rather than treating a version number as proof of hardware compatibility.
+The native Swift application passed 102 automated tests, with five optional hardware tests skipped (107 total). It has its own core, transport, workflow and rendered-view tests. Hardware tests are opt-in. Physical card writes are not part of normal test runs. See build logs/test results rather than treating a version number as proof of hardware compatibility.
 
 V1.01 render checks cover Light/Dark workspaces and editor sheets, USB/Bluetooth sidebar controls, high-DPI logos and persistent appearance selection. No physical reader writes were performed for this UI update.
 
@@ -31,3 +31,7 @@ The Python wheel and source distribution built successfully, all six Qt workspac
 ## Local Windows package — October 27, 2026
 
 A Windows x64 portable ZIP was assembled from the local checkout using Zig 0.17.0, official Python 3.13.17 and hash-verified Windows wheels. Static checks passed for the GUI launcher, icon, all 67 x64 binaries, DLL dependencies, file checksums and included source. The local checkout passed 90 application tests on macOS, with two optional hardware tests skipped. This package has not been executed on Windows and does not establish Windows hardware compatibility. See [the local build guide](WINDOWS-BUILD.txt). Nothing was committed or pushed as part of this build.
+
+## JRD-4035 / YRM100 USB-serial expansion
+
+The independent M100-family implementation is covered by manufacturer packet examples, malformed/fragmented/coalesced frames, signed RSSI/CRC checks, exact PC-plus-EPC selection, memory address and write-size limits, read-back verification and no automatic write retries. Native pseudo-terminal tests exercise inventory notifications interleaved with replies, no-tag/password errors, timeouts and cancellation through the production serial transport. Portable tests simulate complete framed module exchanges and profile-based service routing. UI checks cover 115200-baud defaults, 16-bit word limits, unsupported buzzer controls and unknown per-tag frequency. These checks do not establish physical compatibility: no JRD-4035 or YRM100 hardware has been validated, and no physical tag was written.

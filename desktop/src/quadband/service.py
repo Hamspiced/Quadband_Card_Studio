@@ -1,7 +1,7 @@
 """Exclusive desktop hardware session. SPDX-License-Identifier: GPL-3.0-only"""
 import asyncio
 from .common import require
-from . import transports, magstripe, chameleon, uhf, pcsc
+from . import transports, magstripe, chameleon, uhf, m100, pcsc
 
 
 class Service:
@@ -26,8 +26,11 @@ class Service:
                 await device.close()
         return 'Reader disconnected.'
 
-    async def connect(self, family, mode, device, baud, address=0):
+    async def connect(self, family, mode, device, baud, address=0, reader_profile='Piswords UHF2'):
         require(device is not None, 'Refresh and select a reader first.')
+        if family == 'uhf':
+            require(mode == 'USB serial', 'UHF modules require a USB-serial connection.')
+            require(reader_profile in ('Piswords UHF2', 'M5Stack JRD-4035', 'YRM100'), 'Choose a supported UHF reader profile.')
         await self.disconnect(family)
         if mode == 'Bluetooth':
             channel = await transports.BLEChannel.connect(device, family == 'chameleon', self.progress)
@@ -42,6 +45,9 @@ class Service:
             elif family == 'chameleon':
                 connection = transports.FramedConnection(channel, chameleon.Decoder(), chameleon.encode, self.progress)
                 client = chameleon.Chameleon(connection)
+            elif reader_profile != 'Piswords UHF2':
+                connection = transports.FramedConnection(channel, m100.Decoder(), m100.encode, self.progress)
+                client = m100.M100(connection, reader_profile)
             else:
                 connection = transports.FramedConnection(channel, uhf.Decoder(), lambda cmd, data: uhf.encode(cmd, data, address), self.progress)
                 client = uhf.UHF(connection, address)

@@ -171,6 +171,11 @@ class Connection(QWidget):
         self.status = text_label('Disconnected', 'color: #a7b7c3;')
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        if family == 'uhf':
+            self.reader_profile = combo(['Piswords UHF2', 'M5Stack JRD-4035', 'YRM100'])
+            self.reader_profile.setAccessibleName('UHF reader profile')
+            layout.addWidget(self.reader_profile)
+            self.reader_profile.currentTextChanged.connect(self.profile_changed)
         if compact:
             layout.addWidget(self.mode)
             layout.addWidget(self.device)
@@ -188,6 +193,18 @@ class Connection(QWidget):
             layout.addWidget(fields)
         layout.addWidget(self.status)
         self.mode.currentTextChanged.connect(lambda _: self.device.clear())
+    def profile_changed(self, profile):
+        module = profile != 'Piswords UHF2'
+        self.address.setEnabled(not module)
+        self.baud.setCurrentText('115200' if module else '9600')
+        self.window.uhf_power.setRange(18 if module else 0, 26 if module else 33)
+        self.window.uhf_word.setMaximum(65535 if module else 2147483647)
+        self.window.tags.clear()
+        self.window.uhf_tags.setRowCount(0)
+        self.window.uhf_selected.clear()
+        self.window.uhf_memory.clear()
+        for control in self.window.uhf_buzzer_buttons:
+            control.setEnabled(not module)
 
     def refresh(self):
         mode = self.mode.currentText()
@@ -201,17 +218,36 @@ class Connection(QWidget):
 
     def connect(self):
         mode, device, baud, address = self.mode.currentText(), self.device.currentData(), int(self.baud.currentText()), self.address.value()
-        self.window.run(lambda: self.window.service.connect(self.family, mode, device, baud, address), self.connected, 'Connecting reader…')
+        profile = self.reader_profile.currentText() if self.family == 'uhf' else 'Piswords UHF2'
+        self.window.run(lambda: self.window.service.connect(self.family, mode, device, baud, address, profile), self.connected, 'Connecting reader…')
 
     def connected(self, label):
         self.status.setText(label)
         self.window.note(label)
+        if self.family == 'uhf':
+            self.window.tags.clear()
+            self.window.uhf_tags.setRowCount(0)
+            self.window.uhf_selected.clear()
+            self.window.uhf_memory.clear()
+            self.reader_profile.setEnabled(False)
+            self.mode.setEnabled(False)
+            self.device.setEnabled(False)
+            self.baud.setEnabled(False)
+            self.address.setEnabled(False)
         if self.family == 'chameleon':
             if self.window.hf_readers.findText('Chameleon Ultra · connected') < 0:
                 self.window.hf_readers.addItem('Chameleon Ultra · connected')
 
     def disconnect(self):
-        self.window.run(lambda: self.window.service.disconnect(self.family), lambda _: self.status.setText('Disconnected'), 'Disconnecting…')
+        def disconnected(_):
+            self.status.setText('Disconnected')
+            if self.family == 'uhf':
+                self.reader_profile.setEnabled(True)
+                self.mode.setEnabled(True)
+                self.device.setEnabled(True)
+                self.baud.setEnabled(True)
+                self.address.setEnabled(self.reader_profile.currentText() == 'Piswords UHF2')
+        self.window.run(lambda: self.window.service.disconnect(self.family), disconnected, 'Disconnecting…')
 
 
 class RecordDialog(QDialog):
@@ -328,7 +364,7 @@ class MainWindow(QMainWindow):
         for title, subtitle, build in [
             ('Magstripe Write', 'MSR X6 USB / Bluetooth · MSR605 serial · MSR605X HID', self.build_msr_write),
             ('Magstripe Read', 'MSR600 keyboard swipes and connected MSR writers', self.build_msr_read),
-            ('UHF Workspace', 'Piswords UHF2 · Inventory, memory and EPC', self.build_uhf),
+            ('UHF Workspace', 'Piswords UHF2 · M5Stack JRD-4035 · YRM100', self.build_uhf),
             ('HF Workspace', 'NFC records and Classic 1K data · ACS or Chameleon Ultra', self.build_hf),
             ('LF Workspace', 'Chameleon Ultra · LF identities and T5577 tools', self.build_lf),
             ('About & help', 'Open source card tools by Midwest Gadgets', self.build_about)]:
@@ -736,10 +772,11 @@ class MainWindow(QMainWindow):
 
     def build_uhf(self, layout):
         self.uhf_connection = Connection(self, 'uhf')
-        layout.addWidget(group('Piswords reader', self.uhf_connection))
+        layout.addWidget(group('UHF reader · USB serial', self.uhf_connection))
+        layout.addWidget(text_label('M5Stack JRD-4035 / YRM100: use a USB-TTL serial adapter (normally 115200, 8N1), suitable module power and matching logic voltage. Module profiles have no reader address or buzzer control. Exact memory selection supports EPCs up to 28 bytes; writes support up to 32 words.'))
         layout.addWidget(row(button('Scan tags', self.scan_uhf, True), button('Save scan CSV', self.save_uhf)))
-        self.uhf_tags = QTableWidget(0, 4)
-        self.uhf_tags.setHorizontalHeaderLabels(['EPC', 'Antenna', 'Frequency kHz', 'Reads'])
+        self.uhf_tags = QTableWidget(0, 5)
+        self.uhf_tags.setHorizontalHeaderLabels(['EPC', 'Antenna', 'Frequency kHz', 'RSSI dBm', 'Reads'])
         self.uhf_tags.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.uhf_tags.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.uhf_tags.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -765,8 +802,9 @@ class MainWindow(QMainWindow):
         self.uhf_power = QSpinBox()
         self.uhf_power.setRange(0, 33)
         self.uhf_power.setValue(20)
-        layout.addWidget(group('Reader tools', row(button('Buzzer off', lambda: self.run(lambda: self.service.require('uhf').buzzer(False))),
-            button('Buzzer on', lambda: self.run(lambda: self.service.require('uhf').buzzer(True))), self.uhf_power,
+        self.uhf_buzzer_buttons = [button('Buzzer off', lambda: self.run(lambda: self.service.require('uhf').buzzer(False))),
+                                  button('Buzzer on', lambda: self.run(lambda: self.service.require('uhf').buzzer(True)))]
+        layout.addWidget(group('Reader tools', row(*self.uhf_buzzer_buttons, self.uhf_power,
             button('Set RF power (dBm)', self.set_uhf_power))))
         layout.addWidget(text_label('Keep one intended tag near the reader. EPC selection cannot distinguish tags sharing an EPC. Stop inventory before accessing memory.'))
 
@@ -789,7 +827,8 @@ class MainWindow(QMainWindow):
         i = keys.index(epc)
         if self.uhf_tags.rowCount() <= i:
             self.uhf_tags.setRowCount(i+1)
-        for col, value in enumerate([epc, tag['antenna'], tag['frequency'], tag['count']]):
+        for col, value in enumerate([epc, tag['antenna'], tag['frequency'] if tag['frequency'] is not None else 'Not reported',
+                                     tag.get('signal', 'Not reported'), tag['count']]):
             self.uhf_tags.setItem(i, col, QTableWidgetItem(str(value)))
         if not self.uhf_selected.text():
             self.uhf_selected.setText(epc)
@@ -817,7 +856,8 @@ class MainWindow(QMainWindow):
     def write_uhf(self):
         try:
             epc, _, word, _, password = self.uhf_args()
-            data = hex_bytes(self.uhf_data.text(), maximum=128)
+            module = self.uhf_connection.reader_profile.currentText() != 'Piswords UHF2'
+            data = hex_bytes(self.uhf_data.text(), maximum=64 if module else 128)
             require(bool(data) and len(data) % 2 == 0, 'Enter complete User-memory words.')
             if not self.review('Write UHF User memory', f'Write {len(data)//2} words to User memory starting at word {word}?\nEPC: {epc.hex().upper()}\n{data.hex(" ").upper()}'):
                 return
@@ -829,7 +869,8 @@ class MainWindow(QMainWindow):
     def change_epc(self):
         try:
             old, _, _, _, password = self.uhf_args()
-            new = hex_bytes(self.uhf_new_epc.text(), maximum=62)
+            module = self.uhf_connection.reader_profile.currentText() != 'Piswords UHF2'
+            new = hex_bytes(self.uhf_new_epc.text(), maximum=28 if module else 62)
             if not self.review('Change UHF EPC', f'Current: {old.hex().upper()}\nNew: {new.hex().upper()}\n\nKeep only the intended tag nearby. The app will preserve the other control bits and verify the new EPC.'):
                 return
             def changed(message):

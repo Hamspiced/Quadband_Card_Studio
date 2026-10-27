@@ -24,3 +24,12 @@ The Swift and Python implementations use documented commands and formats. The ma
 RF preset values are credited to **Tototo31 and Ashsh**: https://forum.dangerousthings.com/t/acr1552u-change-rf-power-level-duty-cycle/28545 . The user supplied an `acr1552u_rf_config.py` reference file with no explicit redistribution license found in the supplied file or linked discussion. That local reference is **excluded from public source archives and default builds**. It is not relicensed as Quadband code. Reader controls are independently implemented and continue to work without it; authors' permission would be required before adding that particular file to a public repository.
 
 Midwest Gadgets artwork is governed by `BRANDING.txt` rather than the source-code license.
+
+## JRD-4035 / YRM100 protocol references
+
+The M100-family drivers are independent implementations of the documented UART protocol; no external driver library is bundled.
+
+- M5Stack Unit UHF-RFID (JRD-4035) hardware and wiring: https://docs.m5stack.com/en/unit/Unit_UHF-RFID
+- M5Stack Unit RFID-UHF Common Control Commands: https://m5stack-doc.oss-cn-shenzhen.aliyuncs.com/842/Unit-RFID-UHF-Protocol-EN.pdf
+- M5Stack reference examples (MIT; reference only): https://github.com/m5stack/M5Unit-UHF-RFID
+- MagicRF M100/QM100 firmware command reference, linked by the YRM100 project: https://github.com/frux-c/uhf_rfid/blob/master/assets/res/MagicRF_M100%26QM100_Firmware_manual_en.pdf

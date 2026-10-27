@@ -7,12 +7,13 @@ import MagStripeCore
     @Published var ports: [SerialDevice] = []
     @Published var selectedPort = ""
     @Published var baud = 0
+    @Published var profile = UHFReaderProfile.piswords
     @Published var address = "0"
     @Published var connected = false
     @Published var busy = false
     @Published var scanning = false
     @Published var writing = false
-    @Published var status = "Connect your Piswords UHF reader to get started."
+    @Published var status = "Choose a UHF reader profile and USB-serial port to get started."
     @Published var statusKind = AppModel.StatusKind.neutral
     @Published var version = ""
     @Published var details = ""
@@ -30,12 +31,19 @@ import MagStripeCore
     @Published var power = 20
     @Published var log: [String] = []
     var autoDiscovery = true
-    private var channel: PiswordsTransport?
-    private var client: UHFClient?
+    private var channel: (any SerialUHFTransport)?
+    private var client: (any UHFReaderClient)?
     private var operation: Task<Void,Never>?
     private var generation = 0
+    private var connectionID = UUID()
     var tag: UHFTag? { tags.first { $0.id == selectedTag } }
     var canOperate: Bool { connected && !busy && !scanning }
+    func profileChanged() {
+        guard !busy && !connected else { return }
+        baud = profile.defaultBaud
+        power = min(max(power, profile.powerRange.lowerBound), profile.powerRange.upperBound)
+        tags = []; selectedTag = nil; memory = nil; writePreview = nil
+    }
     func refresh() {
         guard !busy && !connected else { return }
         ports = SerialDevice.scan()
@@ -48,30 +56,43 @@ import MagStripeCore
     }
     func connect() {
         guard !busy, !selectedPort.isEmpty else { return }
-        guard let addr = UInt8(address), addr < 255 else { note("Enter a reader address from 0 to 254.",.error); return }
+        guard profile.isM100 || (UInt8(address).map { $0 < 255 } == true) else { note("Enter a reader address from 0 to 254.",.error); return }
+        let addr = profile.isM100 ? UInt8(0) : UInt8(address)!
         disconnect(silent:true)
-        let port = selectedPort, rates = baud == 0 ? [9600,115200,57600,38400,19200,230400] : [baud]
+        let profile = profile
+        let defaults = profile.isM100 ? [115200,9600,19200] : [9600,115200,57600,38400,19200,230400]
+        let port = selectedPort, rates = baud == 0 ? defaults : [baud]
         generation += 1; let token = generation
-        busy = true; note("Checking the Piswords connection…",.working)
+        busy = true; note("Checking the \(profile.rawValue) connection…",.working)
         operation = Task { [self] in
             var lastError: Error = StripeError("No compatible reader responded.")
             for rate in rates {
                 if Task.isCancelled || token != generation { break }
-                var candidate: PiswordsTransport?
+                var candidate: (any SerialUHFTransport)?
+                var candidateClient: (any UHFReaderClient)?
                 do {
-                    let transport = try PiswordsTransport(path:port,baud:rate,address:addr); candidate = transport
-                    let response = try await transport.exchange(0x72,data:[],timeout:0.8)
-                    let firmware = try UHFProtocol.version(response)
+                    let transport: any SerialUHFTransport
+                    let reader: any UHFReaderClient
+                    if profile.isM100 {
+                        transport = try M100SerialTransport(path: port, baud: rate)
+                        reader = M100Client(transport: transport, profile: profile)
+                    } else {
+                        transport = try PiswordsTransport(path: port, baud: rate, address: addr)
+                        reader = UHFClient(transport: transport)
+                    }
+                    candidate = transport; candidateClient = reader
+                    let firmware = try await reader.identify()
                     try Task.checkCancellation()
                     guard token == generation else { transport.close(); return }
-                    channel = transport; client = UHFClient(transport:transport)
+                    channel = transport; client = reader
                     transport.onTag = { [weak self] in self?.accept($0) }
                     transport.onDisconnect = { [weak self] error in self?.connectionLost(error) }
+                    reader.onInventoryError = { [weak self] error in self?.connectionLost(error) }
                     connected = true; baud = rate; version = firmware
                     try await loadDetails()
-                    note("Piswords connected at \(rate) baud. Ready to scan.",.success)
+                    note("\(profile.rawValue) connected at \(rate) baud. Ready to scan.",.success)
                     busy = false; operation = nil; return
-                } catch { candidate?.close(); lastError = error }
+                } catch { candidateClient?.close(); candidate?.close(); lastError = error; connected = false }
             }
             if token == generation { connected = false; channel?.close(); channel = nil; client = nil; busy = false; operation = nil; note(lastError.localizedDescription,.error) }
         }
@@ -82,38 +103,32 @@ import MagStripeCore
     }
     private func loadDetails() async throws {
         guard let client else { return }
-        var pieces: [String] = []
-        let ant = try await client.command(0x75)
-        if ant.count == 1 && (1...8).contains(ant[0]) { pieces.append("Antenna \(ant[0])") }
-        let rf = try await client.command(0x77)
-        if [1,4,8].contains(rf.count), rf.allSatisfy({ $0 <= 33 }) { power = Int(rf[0]); pieces.append("\(rf.map(String.init).joined(separator:" / ")) dBm") }
-        let region = try await client.command(0x79)
-        if region.count >= 3 { pieces.append("Region \(region[0]) · channels \(region[1])–\(region[2])") }
-        details = pieces.joined(separator:"  ·  ")
+        let settings = try await client.settings()
+        if let value = settings.power { power = min(max(value, profile.powerRange.lowerBound), profile.powerRange.upperBound) }
+        details = settings.details
     }
     func disconnect(silent: Bool = false) {
-        generation += 1; operation?.cancel(); operation = nil; channel?.close(); channel = nil; client = nil
+        generation += 1; connectionID = UUID(); operation?.cancel(); operation = nil; client?.close(); channel?.close(); channel = nil; client = nil
         connected = false; scanning = false; busy = false; writing = false; version = ""; details = ""; tags = []; selectedTag = nil; memory = nil; writePreview = nil
         if !silent { note("UHF reader disconnected.") }
     }
     func scan() {
         guard canOperate, let client else { return }
         run("Starting UHF scan…") {
-            // Clear only the reader's access-EPC filter, never tag memory.
-            try UHFProtocol.acknowledge(await client.command(0x85,[1]))
-            try UHFProtocol.acknowledge(await client.command(0x89,[1]))
+            try await client.startInventory()
             self.scanning = true; self.note("Scanning UHF tags. Stop scanning to read memory or edit an EPC.",.working)
         }
     }
     func stop() {
         guard scanning && !busy, let client else { return }
         run("Stopping UHF scan…") {
-            try UHFProtocol.acknowledge(await client.command(0x8C))
+            try await client.stopInventory()
             self.scanning = false
             self.note("Scan stopped. \(self.tags.count) unique EPC\(self.tags.count == 1 ? "" : "s") found.",.success)
         }
     }
     func accept(_ value: UHFTag) {
+        client?.observe(value)
         if let index = tags.firstIndex(where: { $0.id == value.id }) {
             var value = value; value.sightings = tags[index].sightings+1; tags[index] = value
         } else if tags.count < 2000 { tags.append(value) }
@@ -142,25 +157,29 @@ import MagStripeCore
         do {
             let pass = try HexBytes.parse(password,count:4)
             if epc {
-                let bytes = try UHFProtocol.hex(newEPC,maxBytes:62)
+                let bytes = try UHFProtocol.hex(newEPC,maxBytes:profile.maxEPCBytes)
                 _ = try UHFProtocol.epcPayload(bytes,currentPC:tag.pc)
+                if profile.isM100 { _ = try M100Protocol.selection(epc: tag.epc, pc: tag.pc) }
                 guard bytes != tag.epc else { throw StripeError("Enter a different EPC to write.") }
-                writePreview = UHFWriteIntent(oldEPC:tag.epc,bytes:bytes,word:1,password:pass,isEPC:true)
+                writePreview = UHFWriteIntent(oldEPC:tag.epc,bytes:bytes,word:1,password:pass,isEPC:true,connectionID:connectionID)
             } else {
                 guard let offset = UInt32(word) else { throw StripeError("Enter a valid starting word.") }
-                let bytes = try UHFProtocol.hex(writeData)
-                _ = try UHFProtocol.writeCommand(bank:.user,word:offset,bytes:bytes,password:pass)
-                writePreview = UHFWriteIntent(oldEPC:tag.epc,bytes:bytes,word:offset,password:pass,isEPC:false)
+                let bytes = try UHFProtocol.hex(writeData,maxBytes:profile.maxWriteBytes)
+                if profile.isM100 {
+                    _ = try M100Protocol.selection(epc: tag.epc, pc: tag.pc)
+                    _ = try M100Protocol.writeCommand(bank:.user,word:offset,bytes:bytes,password:pass)
+                } else { _ = try UHFProtocol.writeCommand(bank:.user,word:offset,bytes:bytes,password:pass) }
+                writePreview = UHFWriteIntent(oldEPC:tag.epc,bytes:bytes,word:offset,password:pass,isEPC:false,connectionID:connectionID)
             }
         } catch { note(error.localizedDescription,.error) }
     }
     func performWrite(_ intent: UHFWriteIntent) {
-        guard canOperate, let client, tag?.epc == intent.oldEPC else { writePreview = nil; return }
+        guard canOperate, let client, tag?.epc == intent.oldEPC, intent.connectionID == connectionID else { writePreview = nil; return }
         writePreview = nil; writing = true; memory = nil
         run(intent.isEPC ? "Writing and verifying the EPC…" : "Writing and verifying User memory…") {
             let result: UHFMemoryRead
             if intent.isEPC { result = try await client.changeEPC(from:intent.oldEPC,to:intent.bytes,password:intent.password) }
-            else { result = try await client.write(epc:intent.oldEPC,bank:.user,word:intent.word,bytes:intent.bytes,password:intent.password) }
+            else { result = try await client.writeUser(epc:intent.oldEPC,word:intent.word,bytes:intent.bytes,password:intent.password) }
             self.memory = result
             self.memoryLabel = intent.isEPC ? "Verified EPC and protocol-control word" : "Verified User memory · word \(intent.word)"
             if intent.isEPC {
@@ -172,16 +191,14 @@ import MagStripeCore
         }
     }
     func setBuzzer(_ enabled: Bool) {
-        guard canOperate, let client else { return }
-        run("Setting the UHF buzzer…") { try UHFProtocol.acknowledge(await client.command(0x7A,[enabled ? 2 : 0])); self.note("Reader acknowledged buzzer \(enabled ? "on" : "off").",.success) }
+        guard canOperate, !profile.isM100, let client else { return }
+        run("Setting the UHF buzzer…") { try await client.setBuzzer(enabled); self.note("Reader acknowledged buzzer \(enabled ? "on" : "off").",.success) }
     }
     func applyPower() {
-        guard canOperate, let client, (0...30).contains(power) else { return }
-        let value = UInt8(power)
+        guard canOperate, let client, profile.powerRange.contains(power) else { return }
+        let value = power
         run("Applying UHF power…") {
-            try UHFProtocol.acknowledge(await client.command(0x76,[value]))
-            let actual = try await client.command(0x77)
-            guard actual == [value] else { throw StripeError("Power could not be verified. Read settings again.") }
+            try await client.setPower(value)
             try await self.loadDetails(); self.note("UHF power verified at \(value) dBm.",.success)
         }
     }
@@ -196,7 +213,7 @@ import MagStripeCore
     func exportScan() {
         let panel = NSSavePanel(); panel.nameFieldStringValue = "UHF-tag-scan.csv"; panel.title = "Save UHF scan"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        let rows = tags.map { "\($0.id),\(HexBytes.string($0.pc)),\($0.antenna),\($0.frequencyKHz),\($0.signal.map(String.init) ?? ""),\($0.sightings)" }
+        let rows = tags.map { "\($0.id),\(HexBytes.string($0.pc)),\($0.antenna),\($0.frequencyKHz > 0 ? String($0.frequencyKHz) : ""),\($0.signal.map(String.init) ?? ""),\($0.sightings)" }
         do { try ("EPC,PC,Antenna,Frequency kHz,Signal dBm,Reads\n"+rows.joined(separator:"\n")).write(to:url,atomically:true,encoding:.utf8) }
         catch { note(error.localizedDescription,.error) }
     }
@@ -208,4 +225,5 @@ struct UHFWriteIntent: Identifiable {
     let word: UInt32
     let password: [UInt8]
     let isEPC: Bool
+    let connectionID: UUID
 }

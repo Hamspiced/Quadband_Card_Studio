@@ -92,3 +92,26 @@ def test_appearance_modes_persist_without_card_data(window, app):
     window.settings.sync()
     restored = QSettings(window.settings.fileName(), QSettings.Format.IniFormat)
     assert restored.value('appearance') == 'System'
+
+
+@pytest.mark.parametrize('profile', ['M5Stack JRD-4035', 'YRM100'])
+def test_uhf_module_profiles_expose_only_supported_controls(window, profile):
+    connection = window.uhf_connection
+    connection.reader_profile.setCurrentText(profile)
+    assert connection.baud.currentText() == '115200'
+    assert not connection.address.isEnabled()
+    assert window.uhf_word.maximum() == 65535
+    assert window.uhf_power.minimum() == 18 and window.uhf_power.maximum() == 26
+    assert all(not b.isEnabled() for b in window.uhf_buzzer_buttons)
+    connection.reader_profile.setCurrentText('Piswords UHF2')
+    assert connection.baud.currentText() == '9600' and connection.address.isEnabled()
+    assert window.uhf_word.maximum() == 2147483647
+    assert all(b.isEnabled() for b in window.uhf_buzzer_buttons)
+
+
+def test_uhf_module_reports_display_real_rssi_and_unknown_frequency(window):
+    from quadband.m100 import parse_tag
+    tag = parse_tag(bytes.fromhex('C9340030751FEB705C5904E3D50D703A76'))
+    window.tag_received(tag)
+    assert window.uhf_tags.item(0, 2).text() == 'Not reported'
+    assert window.uhf_tags.item(0, 3).text() == '-55'

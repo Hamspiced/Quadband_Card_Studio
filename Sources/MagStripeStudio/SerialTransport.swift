@@ -38,7 +38,7 @@ struct SerialDevice: Identifiable, Equatable {
     }
 }
 
-/// Nonblocking 8N1 serial connection, shared by the MSR605 and Piswords transports.
+/// Nonblocking 8N1 serial connection shared by magstripe and UHF reader transports.
 @MainActor final class SerialChannel {
     private var fd: Int32 = -1
     private var original = termios()

@@ -21,7 +21,7 @@ rm -f "$APP/Contents/Resources/acr1552u_rf_config.py"
 cp -X LICENSE "$APP/Contents/Resources/LICENSE.txt"
 cp -X BRANDING.txt "$APP/Contents/Resources/BRANDING.txt"
 python3 scripts/source-archive.py
-cp -X dist/Quadband-Card-Studio-1.0.1-source.zip "$APP/Contents/Resources/Source.zip"
+cp -X dist/Quadband-Card-Studio-1.0.2-source.zip "$APP/Contents/Resources/Source.zip"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 if [ -f Resources/AppIcon.icns ]; then cp Resources/AppIcon.icns "$APP/Contents/Resources/"; fi
 codesign --force --sign - "$APP"

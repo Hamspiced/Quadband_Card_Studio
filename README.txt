@@ -1,11 +1,18 @@
 # Quadband Card Studio by Midwest Gadgets
 
-**Version 1.0.1 — macOS, Windows and Linux source. GPL-3.0-only.**
+**Version 1.0.2 — macOS, Windows and Linux source. GPL-3.0-only.**
 
 - **macOS:** native SwiftUI application; build with `bash scripts/build-app.sh`.
 - **Windows / Linux:** shared desktop application in [desktop/](desktop/README.txt), with USB HID, serial, PC/SC and Bluetooth adapters.
 - **Publishable source:** `python3 scripts/source-archive.py` creates a source archive with all original application code, tests, resources, build scripts and CI. See [release instructions](docs/RELEASING.txt), [validation](docs/VALIDATION.txt), [third-party notices](THIRD_PARTY.txt) and [branding terms](BRANDING.txt).
 - **T5577:** password writes are disabled in every version. Open block writing requires compatible firmware; see [password-free policy](docs/T5577.txt). No password controls remain in the UI.
+
+## v1.02 updates
+
+- Added M5Stack JRD-4035 and YRM100 profiles for USB-to-TTL serial adapters, defaulting to 115200 baud.
+- Added M100-family inventory with signed RSSI, memory reads, verified EPC/User-memory writes and RF-power read-back.
+- Preserved Piswords support with separate reader protocols and profile-specific limits and controls.
+- Added manufacturer-packet, simulated serial, selection-safety and UI regressions. Physical JRD-4035/YRM100 operation remains unverified; see the setup and limits below.
 
 ## V1.01 updates
 
@@ -20,7 +27,7 @@ The Windows/Linux implementations are source ports with native packaging jobs, n
 
 Credit to **Tototo31 and Ashsh from the Dangerous Things community** for their work on the ACR122/ACR1552 scripts and reader-configuration research that informed these tools. RF preset references: https://forum.dangerousthings.com/t/acr1552u-change-rf-power-level-duty-cycle/28545 . The supplied reference script is not redistributed; the application uses independent implementations of documented ACS commands. See THIRD_PARTY.txt for attribution and licensing details.
 
-Native macOS app for MSR X6 magnetic-stripe writing over USB or Bluetooth, MSR605 serial read/write, MSR600 keyboard reading, MIFARE Classic 1K NFC records with ACS PC/SC readers or Chameleon Ultra, Piswords UHF2 tag scanning and memory/EPC editing, and Chameleon Ultra LF reading/T5577 writing over USB or Bluetooth. Includes the supplied Midwest Gadgets logo. The sidebar groups **Magstripe Write** and **Magstripe Read**, with **HF Workspace** for NFC and **UHF Workspace** for UHF tags, and **LF Workspace** for LF cards; shared Chameleon connection controls are in the sidebar. SwiftUI, IOKit, CoreBluetooth and the system PC/SC framework; no third-party runtime dependencies.
+Native macOS app for MSR X6 magnetic-stripe writing over USB or Bluetooth, MSR605 serial read/write, MSR600 keyboard reading, MIFARE Classic 1K NFC records with ACS PC/SC readers or Chameleon Ultra, Piswords UHF2, M5Stack JRD-4035 and YRM100 UHF tag scanning and memory/EPC editing, and Chameleon Ultra LF reading/T5577 writing over USB or Bluetooth. Includes the supplied Midwest Gadgets logo. The sidebar groups **Magstripe Write** and **Magstripe Read**, with **HF Workspace** for NFC and **UHF Workspace** for UHF tags, and **LF Workspace** for LF cards; shared Chameleon connection controls are in the sidebar. SwiftUI, IOKit, CoreBluetooth and the system PC/SC framework; no third-party runtime dependencies.
 
 ## Open the app
 
@@ -57,6 +64,30 @@ Serial communication has been tested against a simulated MSR605 on a macOS pseud
 Write commands are never automatically retried. A timeout or failed read-back means the tag may be partially changed; scan/read it before another attempt. Reader success alone is not shown as a verified tag write. The workspace handles the supplied UHF2/UCM60x protocol over USB serial; unrelated Piswords products, TCP/IP and HID UHF transports are not claimed as supported. UHF EPC Gen2 tags are distinct from HF NFC/MIFARE cards.
 
 Native live validation read the connected UCM601 version, antenna, power and region, scanned the supplied test tag, and read its TID and EPC/PC words through the production transport. Packet checksums, fragmented/interleaved reports and the manufacturer's memory layouts are covered by tests. EPC writes and verification are tested with a simulated tag; **the physical test tag has not been changed**.
+
+## UHF Workspace: M5Stack JRD-4035 and YRM100
+
+Choose **M5Stack JRD-4035** or **YRM100** under Reader profile, select the **USB-to-serial adapter's port**, then connect. These profiles use the M100-family binary UART protocol, not the Piswords protocol, keyboard output or an AT/debug console.
+
+### USB-TTL connection
+
+- Use a USB-to-TTL UART adapter with logic voltage matched to the specific module; an RS-232-level adapter is not interchangeable.
+- Cross adapter TX to module RX and adapter RX to module TX, with a common ground. Supply the module's specified power from a suitable source; do not assume the adapter's low-current logic-voltage pin can power its RF stage.
+- For the M5Stack U107 Grove connector, the documented module pins are black GND, red 5V, yellow UART_RX and white UART_TX. Power voltage and UART logic voltage are separate requirements. Bare YRM100 boards and carrier variants need their own pinout and electrical specifications checked.
+- The default profile baud is **115200**, **8 data bits, no parity, 1 stop bit**, with no flow control. Older M100 firmware may use **9600**; select it explicitly, or use native macOS automatic baud detection (115200, 9600, 19200).
+- A module connected behind an M5 controller's ordinary USB/debug port is not automatically a serial reader. That arrangement needs a transparent binary UART bridge; the direct USB-TTL connection does not need controller firmware.
+
+### Supported operations and limits
+
+Inventory reports EPC, PC and signed RSSI. Repeated single-poll commands provide a continuous scan until Stop; valid no-tag replies are not connection failures. The module's tag notifications do not contain a channel frequency, so the UI says **Frequency not reported** and the CSV frequency field stays empty.
+
+After scanning and selecting a tag, read EPC, TID, User or Reserved memory, or review an EPC/User-memory write. The application selects the complete **PC word plus EPC**, checks the selection read-back and returned identity, and verifies write results against the tag's memory. This avoids matching a longer EPC that only shares a prefix. Identical PC/EPC tags still cannot be distinguished, so keep one intended tag in range.
+
+Module limits: **16-bit word addresses**, **1–64 words per read**, and **1–32 words (64 bytes) per write**. The one-byte select-mask length limits exact memory access and EPC changes to **2–28-byte EPCs**. Longer EPCs can be inventoried but are not eligible for memory operations in this implementation. EPC changes preserve the other PC bits and leave the CRC word to the tag.
+
+RF-power controls use a conservative **18–26 dBm** range and verify the module's hundredths-of-dBm value by reading it back. Region, channel and frequency-hopping settings are not changed. There is no documented module buzzer command, so those buttons are unavailable. Password/Reserved and TID writes, lock/kill operations, firmware updates and changes to the module's stored baud rate are not exposed.
+
+The drivers are independent implementations of the [M5Stack protocol manual](https://m5stack-doc.oss-cn-shenzhen.aliyuncs.com/842/Unit-RFID-UHF-Protocol-EN.pdf) and M100 firmware command reference. Protocol fixtures and simulated serial readers validate framing, error handling, selection and verified writes. **Physical JRD-4035/YRM100 modules have not been tested with this application.**
 
 ## MSR600: swipes with or without markers
 
