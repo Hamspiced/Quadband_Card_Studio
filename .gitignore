@@ -1,0 +1,23 @@
+.build/
+dist/
+build/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.DS_Store
+*.md
+*.MD
+*.app/
+/*.zip
+/SOURCE-MANIFEST.sha256
+# Private card data is never part of a source release.
+*.qcard
+*.qlf
+*.csv
+# User-supplied reference with no established redistribution permission.
+Resources/acr1552u_rf_config.py
+# Generated Windows icon (original PNG is included).
+desktop/packaging/Quadband.ico

@@ -1,0 +1,7 @@
+# Security and data handling
+
+The app keeps card data in memory unless the user explicitly saves a file. It does not upload card data or collect telemetry. Saved `.qcard` data may contain private content even though UID and authentication keys are excluded. `.qlf` files hold readable LF identities. Store and share these files deliberately.
+
+When reporting a bug, provide a minimal fabricated sample, OS, app version, reader model/firmware and error text. Do not attach real credentials, key material or private memory dumps to public issues. Use the hosting platform's private vulnerability reporting mechanism when the repository owner has enabled it; no reporting address has been invented for this project.
+
+No UID/manufacturer or Classic sector-trailer writes are exposed. T5577 password writes and legacy password-setting commands are blocked. The program is not a universal card formatter, password recovery utility or device firmware updater.

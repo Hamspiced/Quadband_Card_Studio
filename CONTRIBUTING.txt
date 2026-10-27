@@ -1,0 +1,9 @@
+# Contributing
+
+Use the native Swift targets for macOS and `desktop/src/quadband` for Windows/Linux. Keep `.qcard` and `.qlf` schemas interoperable. Changes to a protocol or write policy should update both implementations and their fixtures.
+
+Run `bash scripts/test.sh` on macOS and `python -m pytest desktop/tests` / `python -m ruff check desktop/src desktop/tests` for the portable app. Native CI builds Windows/Linux packages and the universal Mac app. Document exactly which OS, reader firmware and operations were tested; simulated success is not physical hardware validation.
+
+Never auto-retry card writes. Check identity and stale data, protect reserved blocks, and verify read-back. T5577 password-setting commands and password-block writes are forbidden by project policy. A timeout after a write must report an uncertain/partial result. Keep card content, keys, passwords and hardware serials out of logs, issue reports and committed fixtures. Use fabricated fixtures only.
+
+Contributions are accepted under GPL-3.0-only. Keep third-party license notices and list new dependencies in THIRD_PARTY.txt. Do not commit vendor binaries, unknown-license scripts, generated credentials, build caches or private captures. The project does not change reader firmware automatically.

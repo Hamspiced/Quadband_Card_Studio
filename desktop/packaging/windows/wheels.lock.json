@@ -1,0 +1,207 @@
+[
+  {
+    "name": "bleak",
+    "version": "3.0.2",
+    "filename": "bleak-3.0.2-py3-none-any.whl",
+    "url": "https://files.pythonhosted.org/packages/26/54/05aceb9cd80073805b3ed8522e3196e8cb22f70e741873fa51406c31f4e7/bleak-3.0.2-py3-none-any.whl",
+    "sha256": "39092feb9e83f1df5ad2f88e837723c7211c982ce9e9cda6235104bc2ebe0d0d",
+    "license": "MIT",
+    "project_urls": [
+      "Homepage, https://github.com/hbldh/bleak",
+      "Documentation, https://bleak.readthedocs.io",
+      "Changelog, https://github.com/hbldh/bleak/blob/develop/CHANGELOG.rst",
+      "Support, https://github.com/hbldh/bleak/discussions",
+      "Issues, https://github.com/hbldh/bleak/issues"
+    ]
+  },
+  {
+    "name": "hidapi",
+    "version": "0.15.0",
+    "filename": "hidapi-0.15.0-cp313-cp313-win_amd64.whl",
+    "url": "https://files.pythonhosted.org/packages/d9/00/7dd3f866a748b0c9eb4adedaa025ec8c533ed1946e9e918661c948a5c0f4/hidapi-0.15.0-cp313-cp313-win_amd64.whl",
+    "sha256": "04e0c1ed6d742bc6e1d00599394bec6b2afb8ee2fc5a0a183d3c4c2d4e315c34",
+    "license": null,
+    "project_urls": []
+  },
+  {
+    "name": "pyscard",
+    "version": "2.3.1",
+    "filename": "pyscard-2.3.1-cp313-cp313-win_amd64.whl",
+    "url": "https://files.pythonhosted.org/packages/8c/2b/c98e7bcf45958905d1bfdab59fe5acd67fe9ff0ad78145c4783886c38c84/pyscard-2.3.1-cp313-cp313-win_amd64.whl",
+    "sha256": "df2b256bc719b701807114bdd179f7b303f309a954d5689188b088adfc33ead2",
+    "license": null,
+    "project_urls": []
+  },
+  {
+    "name": "pyserial",
+    "version": "3.5",
+    "filename": "pyserial-3.5-py2.py3-none-any.whl",
+    "url": "https://files.pythonhosted.org/packages/07/bc/587a445451b253b285629263eb51c2d8e9bcea4fc97826266d186f96f558/pyserial-3.5-py2.py3-none-any.whl",
+    "sha256": "c4451db6ba391ca6ca299fb3ec7bae67a5c55dde170964c7a14ceefec02f2cf0",
+    "license": "BSD",
+    "project_urls": []
+  },
+  {
+    "name": "PySide6_Essentials",
+    "version": "6.12.0",
+    "filename": "pyside6_essentials-6.12.0-cp310-abi3-win_amd64.whl",
+    "url": "https://files.pythonhosted.org/packages/03/61/9a7e32a37b224f68506785bfb0f288d516098ec71681782d72b695a6c95d/pyside6_essentials-6.12.0-cp310-abi3-win_amd64.whl",
+    "sha256": "c9a95102aa23c1f86516a30d5a9be37552d324eee7e567eb7508973f1218cb42",
+    "license": "LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only",
+    "project_urls": [
+      "Homepage, https://pyside.org",
+      "Documentation, https://doc.qt.io/qtforpython",
+      "Repository, https://code.qt.io/cgit/pyside/pyside-setup.git/",
+      "Changelog, https://code.qt.io/cgit/pyside/pyside-setup.git/tree/doc/changelogs",
+      "Tracker, https://qt-project.atlassian.net/browse/PYSIDE"
+    ]
+  },
+  {
+    "name": "shiboken6",
+    "version": "6.12.0",
+    "filename": "shiboken6-6.12.0-cp310-abi3-win_amd64.whl",
+    "url": "https://files.pythonhosted.org/packages/2a/b6/bee97e7a2edeab72aafabb46ee5adc939790a638d107860b4cad7a20e407/shiboken6-6.12.0-cp310-abi3-win_amd64.whl",
+    "sha256": "a1906cb8116869178c64b6bab52623bbc8b4ceed7b30bfc3c9aa0f6e67f6438e",
+    "license": "LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only",
+    "project_urls": [
+      "Homepage, https://pyside.org",
+      "Documentation, https://doc.qt.io/qtforpython",
+      "Repository, https://code.qt.io/cgit/pyside/pyside-setup.git/",
+      "Changelog, https://code.qt.io/cgit/pyside/pyside-setup.git/tree/doc/changelogs",
+      "Tracker, https://qt-project.atlassian.net/browse/PYSIDE"
+    ]
+  },
+  {
+    "name": "typing_extensions",
+    "version": "4.16.0",
+    "filename": "typing_extensions-4.16.0-py3-none-any.whl",
+    "url": "https://files.pythonhosted.org/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl",
+    "sha256": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8",
+    "license": "PSF-2.0",
+    "project_urls": [
+      "Bug Tracker, https://github.com/python/typing_extensions/issues",
+      "Changes, https://github.com/python/typing_extensions/blob/main/CHANGELOG.txt",
+      "Documentation, https://typing-extensions.readthedocs.io/",
+      "Home, https://github.com/python/typing_extensions",
+      "Q & A, https://github.com/python/typing/discussions",
+      "Repository, https://github.com/python/typing_extensions"
+    ]
+  },
+  {
+    "name": "winrt-runtime",
+    "version": "4.0.3",
+    "filename": "winrt_runtime-4.0.3-cp313-cp313-win_amd64.whl",
+    "url": "https://files.pythonhosted.org/packages/6f/d7/4349141651d39d5be382b70537cadfbacf38730c96032c88a6538f0f5b81/winrt_runtime-4.0.3-cp313-cp313-win_amd64.whl",
+    "sha256": "e270f9520630c3515d5326c0b52fa1cbcffb9f335bc5e374c213307e0d053f4b",
+    "license": "MIT",
+    "project_urls": [
+      "Documentation, https://pywinrt.readthedocs.io",
+      "Repository, https://github.com/pywinrt/pywinrt",
+      "Changelog, https://github.com/pywinrt/pywinrt/blob/main/runtime/CHANGELOG.txt"
+    ]
+  },
+  {
+    "name": "winrt-Windows.Devices.Bluetooth",
+    "version": "4!10.0.28000.2705",
+    "filename": "winrt_windows_devices_bluetooth-4!10.0.28000.2705-py3-none-any.whl",
+    "url": "https://files.pythonhosted.org/packages/c9/0c/6ac0f96761a9a0a3d247e59b9e133819c095aea588cd0858f7d4bdaff715/winrt_windows_devices_bluetooth-4!10.0.28000.2705-py3-none-any.whl",
+    "sha256": "c68bdb970459eab888cf03764d50ee156eedd10fd02aceefb161babad0ba3dc7",
+    "license": "MIT",
+    "project_urls": [
+      "Documentation, https://pywinrt.readthedocs.io",
+      "Repository, https://github.com/pywinrt/pywinrt",
+      "Changelog, https://github.com/pywinrt/pywinrt/blob/main/projection/winrt/CHANGELOG.txt"
+    ]
+  },
+  {
+    "name": "winrt-Windows.Devices.Bluetooth.Advertisement",
+    "version": "4!10.0.28000.2705",
+    "filename": "winrt_windows_devices_bluetooth_advertisement-4!10.0.28000.2705-py3-none-any.whl",
+    "url": "https://files.pythonhosted.org/packages/bb/14/cc100ba8a4f650dd5489f397d4988c58a18d8dbda6b9155691ce830e3f6f/winrt_windows_devices_bluetooth_advertisement-4!10.0.28000.2705-py3-none-any.whl",
+    "sha256": "810e11e4d6d3ad226b9cadf00b27e4a345b82b0244ec3900ea02fffd9e86d60c",
+    "license": "MIT",
+    "project_urls": [
+      "Documentation, https://pywinrt.readthedocs.io",
+      "Repository, https://github.com/pywinrt/pywinrt",
+      "Changelog, https://github.com/pywinrt/pywinrt/blob/main/projection/winrt/CHANGELOG.txt"
+    ]
+  },
+  {
+    "name": "winrt-Windows.Devices.Bluetooth.GenericAttributeProfile",
+    "version": "4!10.0.28000.2705",
+    "filename": "winrt_windows_devices_bluetooth_genericattributeprofile-4!10.0.28000.2705-py3-none-any.whl",
+    "url": "https://files.pythonhosted.org/packages/a1/75/ba8882b335d3abdd0a262fdbfa21b86f7258c80e716c3034a78a99cd23c6/winrt_windows_devices_bluetooth_genericattributeprofile-4!10.0.28000.2705-py3-none-any.whl",
+    "sha256": "9e8d7fa90148f659bb335b58e96d87b5267cb429bf779f56aec138e0524b3a12",
+    "license": "MIT",
+    "project_urls": [
+      "Documentation, https://pywinrt.readthedocs.io",
+      "Repository, https://github.com/pywinrt/pywinrt",
+      "Changelog, https://github.com/pywinrt/pywinrt/blob/main/projection/winrt/CHANGELOG.txt"
+    ]
+  },
+  {
+    "name": "winrt-Windows.Devices.Enumeration",
+    "version": "4!10.0.28000.2705",
+    "filename": "winrt_windows_devices_enumeration-4!10.0.28000.2705-py3-none-any.whl",
+    "url": "https://files.pythonhosted.org/packages/db/60/913888bbd1bf5e32c27a704ef6ae568bb623f4a4a74c0e4cdb7129b87186/winrt_windows_devices_enumeration-4!10.0.28000.2705-py3-none-any.whl",
+    "sha256": "719e7f638db3d324f54ce86ed09689dce11374aa60fbe2b14843651bee266fc8",
+    "license": "MIT",
+    "project_urls": [
+      "Documentation, https://pywinrt.readthedocs.io",
+      "Repository, https://github.com/pywinrt/pywinrt",
+      "Changelog, https://github.com/pywinrt/pywinrt/blob/main/projection/winrt/CHANGELOG.txt"
+    ]
+  },
+  {
+    "name": "winrt-Windows.Devices.Radios",
+    "version": "4!10.0.28000.2705",
+    "filename": "winrt_windows_devices_radios-4!10.0.28000.2705-py3-none-any.whl",
+    "url": "https://files.pythonhosted.org/packages/18/9b/b5fdefa5cf82226da5b89bf15d6d45119588b0997497fcc2936e5a104da6/winrt_windows_devices_radios-4!10.0.28000.2705-py3-none-any.whl",
+    "sha256": "1852902c3c89ba9ca291bfa4099d3ead923eca6c38a4c421b99a35cebd717f62",
+    "license": "MIT",
+    "project_urls": [
+      "Documentation, https://pywinrt.readthedocs.io",
+      "Repository, https://github.com/pywinrt/pywinrt",
+      "Changelog, https://github.com/pywinrt/pywinrt/blob/main/projection/winrt/CHANGELOG.txt"
+    ]
+  },
+  {
+    "name": "winrt-Windows.Foundation",
+    "version": "4!10.0.28000.2705",
+    "filename": "winrt_windows_foundation-4!10.0.28000.2705-py3-none-any.whl",
+    "url": "https://files.pythonhosted.org/packages/34/59/b952e151894cc86954edddc0bc894e3849a0aa09363742accd6bab8f536a/winrt_windows_foundation-4!10.0.28000.2705-py3-none-any.whl",
+    "sha256": "b409530668b101cb17b3a6ce02061b9839665c92b64b0563c106186d87562571",
+    "license": "MIT",
+    "project_urls": [
+      "Documentation, https://pywinrt.readthedocs.io",
+      "Repository, https://github.com/pywinrt/pywinrt",
+      "Changelog, https://github.com/pywinrt/pywinrt/blob/main/projection/winrt/CHANGELOG.txt"
+    ]
+  },
+  {
+    "name": "winrt-Windows.Foundation.Collections",
+    "version": "4!10.0.28000.2705",
+    "filename": "winrt_windows_foundation_collections-4!10.0.28000.2705-py3-none-any.whl",
+    "url": "https://files.pythonhosted.org/packages/db/f9/ed0f5b9c4dc4ccd5f46dc9c65e4b6c82254eae07df00fa8aad2d9dd91863/winrt_windows_foundation_collections-4!10.0.28000.2705-py3-none-any.whl",
+    "sha256": "f2169228644b86d752dca6f4ba0bb55ee27c5cc1062f3a3f0fbb375f48894bd7",
+    "license": "MIT",
+    "project_urls": [
+      "Documentation, https://pywinrt.readthedocs.io",
+      "Repository, https://github.com/pywinrt/pywinrt",
+      "Changelog, https://github.com/pywinrt/pywinrt/blob/main/projection/winrt/CHANGELOG.txt"
+    ]
+  },
+  {
+    "name": "winrt-Windows.Storage.Streams",
+    "version": "4!10.0.28000.2705",
+    "filename": "winrt_windows_storage_streams-4!10.0.28000.2705-py3-none-any.whl",
+    "url": "https://files.pythonhosted.org/packages/63/69/58254ddbc0ef0e19095e98bfce1cf3df98cf5611098db9147cf428bcd1a8/winrt_windows_storage_streams-4!10.0.28000.2705-py3-none-any.whl",
+    "sha256": "2824e516e328c9ba76ffc7926431255b124b4a9f52c656f0b1e0056a7f8ca7b8",
+    "license": "MIT",
+    "project_urls": [
+      "Documentation, https://pywinrt.readthedocs.io",
+      "Repository, https://github.com/pywinrt/pywinrt",
+      "Changelog, https://github.com/pywinrt/pywinrt/blob/main/projection/winrt/CHANGELOG.txt"
+    ]
+  }
+]

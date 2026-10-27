@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Quadband Card Studio
+Comment=Magstripe, HF, UHF and LF card workspaces by Midwest Gadgets
+Exec=QuadbandCardStudio
+Icon=quadband-card-studio
+Terminal=false
+Categories=Utility;

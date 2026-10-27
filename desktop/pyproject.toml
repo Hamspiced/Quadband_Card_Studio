@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quadband-card-studio"
+version = "1.0.0"
+description = "Magstripe, HF, UHF and LF card workspaces by Midwest Gadgets"
+readme = "README.txt"
+requires-python = ">=3.11,<3.15"
+license = "GPL-3.0-only"
+authors = [{name = "Midwest Gadgets"}]
+dependencies = [
+  "PySide6-Essentials>=6.8,<7", "pyserial>=3.5,<4", "hidapi>=0.14,<1",
+  "bleak>=1,<4", "pyscard>=2.2,<3"
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10", "pytest-asyncio>=0.24,<2", "ruff>=0.9,<1", "build>=1,<2", "pyinstaller>=6.10,<7"]
+
+[project.gui-scripts]
+quadband-card-studio = "quadband.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+quadband = ["assets/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 110
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]

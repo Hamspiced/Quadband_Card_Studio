@@ -1,0 +1,31 @@
+# Validation status — 1.0.0
+
+## Automated checks
+
+The shared Python implementation passed 90 automated tests (two optional hardware tests skipped in the ordinary run) and was tested on macOS with Python 3.12 and Qt/PySide6 6.12.0. Its tests cover protocol framing, delayed/fragmented responses, device failures, 19 record types, Classic memory protection, NDEF length-last commit, profile interoperability, batch removal/failure handling, EPC control-bit preservation and no automatic write retries. Password-free T5577 tests reject legacy password writers, block 7, PWD-enabled configurations, authenticated writes and page-1 writes. Adapter tests exercise PC/SC transaction cleanup and authentication, serial loopback, and BLE pairing order, chunking and failure cleanup. UI tests construct all workspaces and record forms and clear session data.
+
+The native Swift application passed 87 automated tests, with five optional hardware tests skipped (92 total). It has its own core, transport, workflow and rendered-view tests. Hardware tests are opt-in. Physical card writes are not part of normal test runs. See build logs/test results rather than treating a version number as proof of hardware compatibility.
+
+## Hardware evidence
+
+Earlier native Mac validation identified the MSR X6 over BLE, read all 64 blocks and an NFC URL through an ACR122U, and inventoried/read EPC/TID from the supplied Piswords UHF2. Chameleon USB identification and HF identification passed; complete HF memory read, LF target detection and physical LF/HF writes were not confirmed. MSR605 and ACR1552U were unavailable. During this port work, the Python serial adapter identified the connected Chameleon over USB and confirmed command 3016 is available. The PC/SC adapter enumerated the connected ACR122U; its read check correctly reported no card present, so no portable HF memory read was verified. No physical card was written during this port work.
+
+Chameleon Bluetooth reached a firmware-protected characteristic but macOS pairing did not complete. The native app now reads the protected battery characteristic before subscribing; this is not yet a verified pairing fix. Windows/Linux use their own BLE system pairing flow. No pairing protection is disabled.
+
+## Release validation still required
+
+| Area | Windows / Linux check |
+| --- | --- |
+| Native packages | Run the CI-produced build on a clean machine; inspect startup, fonts, all workspaces and dependency notices |
+| MSR X6 HID / BLE | Connect, configure, read; write an expendable card and verify the second swipe; cancel/unplug mid-operation |
+| MSR605 / MSR600 | Serial driver + handshake; focused keyboard swipes, CRLF/tab and marker-free mappings |
+| ACR122U / ACR1552U | PC/SC driver, card absence/removal, automatic keys, records, partial-copy failure and repeat cards; reader controls/firmware gates |
+| UHF2 | Serial framing/baud, inventory/stop, exact EPC filter, memory read, User write and EPC verification |
+| Chameleon | USB/BLE capability negotiation, pairing, LF scans, HF read/write, open T5577 writes only on firmware advertising 3016 |
+| T5577 | Use an unprotected expendable tag; verify identity and independently inspect config/PWD/block 7 if hardware supports it; never send legacy password-writing commands |
+
+The Python wheel and source distribution built successfully, all six Qt workspaces rendered offscreen, and the shared PyInstaller recipe built a host-only macOS smoke package. This smoke package is not a Windows/Linux binary and is not the supported native Mac release. Native Windows/Linux build jobs are supplied but have not been run on a remote CI service from this workspace. This Mac cannot certify Windows WinSCard/WinRT or Linux BlueZ/pcsc-lite behavior. No Windows/Linux hardware pass is claimed. Linux packages target Ubuntu 24.04; other distributions need their own checks.
+
+## Local Windows package — October 27, 2026
+
+A Windows x64 portable ZIP was assembled from the local checkout using Zig 0.17.0, official Python 3.13.17 and hash-verified Windows wheels. Static checks passed for the GUI launcher, icon, all 67 x64 binaries, DLL dependencies, file checksums and included source. The local checkout passed 90 application tests on macOS, with two optional hardware tests skipped. This package has not been executed on Windows and does not establish Windows hardware compatibility. See [the local build guide](WINDOWS-BUILD.txt). Nothing was committed or pushed as part of this build.

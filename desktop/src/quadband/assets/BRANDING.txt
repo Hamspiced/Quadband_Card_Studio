@@ -1,0 +1,7 @@
+# Midwest Gadgets branding
+
+The GPLv3 license covers the application code, tests, build scripts and project documentation. It does not grant ownership of, or trademark rights in, the **Midwest Gadgets** name or logo or the **Quadband Card Studio** product name.
+
+The supplied logo and derived icons in `Resources/` and `desktop/src/quadband/assets/` remain Midwest Gadgets artwork under separate terms. You may reproduce the supplied artwork with unmodified distributions of this project, with attribution to Midwest Gadgets. This permission does not imply endorsement of derivatives or permit use of the marks for unrelated products. For modified distributions, replace the artwork and identify your changes without implying Midwest Gadgets endorsement. Contact the project owner for other branding permission.
+
+Removing/replacing the logo does not prevent building or running the application. The original supplied raster logo is included; no editable vector master was supplied. Software source remains available under GPL-3.0-only regardless of these branding terms.

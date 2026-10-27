@@ -1,0 +1,8 @@
+# Optional active-session access. Review and install with your distribution's udev tools.
+# MSR X-series non-keyboard HID interface.
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0801", TAG+="uaccess"
+# Chameleon Ultra and supplied Piswords UHF2 serial interfaces.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="6868", ATTRS{idProduct}=="8686", TAG+="uaccess"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="fe0c", TAG+="uaccess"
+# Other USB serial adapters: use your normal dialout/uucp membership.
+# ACS readers use pcscd/libccid's existing device access rules.

@@ -1,0 +1,26 @@
+# Third-party software and protocol references
+
+Original Quadband code is Copyright (C) 2026 Midwest Gadgets, GPL-3.0-only. Third-party dependencies retain their own licenses. The native Mac application uses Apple system frameworks; the portable application uses the following unmodified libraries:
+
+| Component | License / source |
+| --- | --- |
+| Python | PSF license; https://www.python.org/downloads/source/ |
+| PySide6 Essentials / Shiboken6 / Qt 6 | LGPLv3/GPLv3 options and bundled third-party notices; https://code.qt.io/pyside/pyside-setup.git/ and https://code.qt.io/qt/qtbase.git/ |
+| Bleak | MIT; https://github.com/hbldh/bleak |
+| pyserial | BSD-3-Clause; https://github.com/pyserial/pyserial |
+| hidapi Python binding / HIDAPI | BSD/GPL options and HIDAPI BSD/GPL/original options; https://github.com/trezor/cython-hidapi and https://github.com/libusb/hidapi |
+| pyscard | LGPL-2.1-or-later; https://github.com/LudovicRousseau/pyscard |
+| PyInstaller (build tool/runtime bootloader) | GPL with distribution exception; https://github.com/pyinstaller/pyinstaller |
+| Platform BLE dependencies | WinRT packages on Windows; dbus-fast on Linux; PyObjC on macOS; see their installed metadata/licenses |
+
+The packaging script gathers installed distribution license/notice files and version metadata. Library source links are provided in that metadata and the sources above. Before distributing bundled binaries, provide the matching required dependency source/relinking materials and their notices under each applicable license; a link to this application's source alone is not a substitute. A source-only checkout/archive installs dependencies separately and contains no vendor runtimes. PySide wheels include Qt modules and third-party components; preserve their bundled license files. See `docs/RELEASING.txt`.
+
+## Independent protocol implementations
+
+Credit to **Tototo31 and Ashsh from the Dangerous Things community** for their work on the ACR122/ACR1552 scripts and reader-configuration research that informed the reader tools.
+
+The Swift and Python implementations use documented commands and formats. The manufacturer's Piswords Windows executable/runtime and Chameleon firmware are **not** redistributed. The original project README lists ACS, NXP, MSR, NFC and Piswords references. T5577 open-write framing and independent encoders are documented in `docs/T5577.txt` with links to official Chameleon sources.
+
+RF preset values are credited to **Tototo31 and Ashsh**: https://forum.dangerousthings.com/t/acr1552u-change-rf-power-level-duty-cycle/28545 . The user supplied an `acr1552u_rf_config.py` reference file with no explicit redistribution license found in the supplied file or linked discussion. That local reference is **excluded from public source archives and default builds**. It is not relicensed as Quadband code. Reader controls are independently implemented and continue to work without it; authors' permission would be required before adding that particular file to a public repository.
+
+Midwest Gadgets artwork is governed by `BRANDING.txt` rather than the source-code license.

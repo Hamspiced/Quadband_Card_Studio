@@ -1,0 +1,21 @@
+# Password-free T5577 policy — all platforms
+
+The app never creates or changes a T5577 password. There are no current/new T5577 password inputs, no password defaults, and no password storage in LF files. This does not remove HF authentication keys or UHF access-password inputs; those authenticate other card families without setting a T5577 password.
+
+Chameleon's legacy format-specific write commands (3001, 3003, 3005, 3006, 3011, 3015, 3018, 3020) set the password block and PWD bit inside firmware. They are rejected in the application command layer, even if called outside the GUI. Sending an all-zero password to one of them would still write a password and is not used.
+
+Newer official firmware exposes **LF_T55XX_WRITE, command 3016**. Its payload is block number, 32-bit big-endian word, use-password flag, four ignored password bytes and page flag. Quadband hardcodes the final six bytes to zero, allows only page-0 blocks 0–6, never touches password block 7, and rejects any block-0 configuration with PWD bit `0x10` enabled. The firmware calls its open write with no password and lock bit zero. The reserved zero bytes in this command are ignored by firmware and are not written to the password block.
+
+The app encodes the LF frame, writes data blocks first, then writes a configuration with password mode disabled. It scans the readable identity before reporting success. This confirms the identity, **not a complete raw configuration dump**; the supported reader protocol does not expose that dump. A failed or interrupted write can leave partial data, but no password command is sent. There is no fallback to legacy commands and no automatic write retry.
+
+Supported encoders: EM410x, EM410x Electra, Viking, ioProx, PAC/Stanley, Jablotron. HID Prox and Pyramid remain scan/save only because a password-free encoder has not been implemented here. Firmware without 3016 remains scan-only for LF; HF functionality is unaffected. No firmware is installed automatically.
+
+Recovery writes the chosen EM410x test identity/configuration through the same open-write path. It cannot authenticate an already password-protected target, repair permanent locks, physical damage or unsupported downlink modes. This change applies to future app operations; it does not automatically modify any physical card that was previously programmed elsewhere.
+
+Protocol references (checked October 27, 2026):
+
+- https://github.com/RfidResearchGroup/ChameleonUltra/blob/main/firmware/application/src/app_cmd.c — `cmd_processor_lf_t55xx_write`.
+- https://github.com/RfidResearchGroup/ChameleonUltra/blob/main/firmware/application/src/rfid/reader/lf/lf_reader_main.c — `lf_t55xx_write_block` and legacy password behavior.
+- https://github.com/RfidResearchGroup/ChameleonUltra/tree/main/firmware/application/src/rfid/nfctag/lf/protocols — on-air frame definitions and T5577 modulation/rate constants.
+
+Regression tests cover the PWD bit, block-7 exclusion, no authentication/page-1 payload, legacy command rejection, capability gating, EM parity, and identity read-back failures in both application implementations.

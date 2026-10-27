@@ -1,0 +1,47 @@
+# Local Windows build
+
+The Windows package can now be built from an **unpushed local checkout**, without a Windows VM or GitHub Actions. It uses a cross-compiled Windows GUI launcher, the official Python 3.13.17 x64 embeddable runtime, and official Windows wheels. It is a portable directory package: extract the whole ZIP and run `QuadbandCardStudio.exe`. Python does not need to be installed on the receiving PC. Target: Windows 11 x64; other Windows versions/architectures are not validated.
+
+The app and all T5577 restrictions are the same Python source as the normal Windows build. The launcher does not install software, modify the registry, download files, enumerate readers, or write cards. The bundled runtime is isolated from system Python and `PYTHONPATH`. Qt DLLs remain separate and replaceable.
+
+## Build on macOS or Linux
+
+Use a host Python 3.12+ environment with `packaging` and `PySide6-Essentials` installed. Download Zig **0.17.0** for the host platform from https://ziglang.org/download/ and verify it against the SHA-256 in https://ziglang.org/download/index.json. Then, from the repository root:
+
+```sh
+python desktop/packaging/build-windows-local.py --zig /path/to/zig
+```
+
+The build downloads into `.build/windows-downloads`, verifies every archive checksum, compiles `desktop/packaging/windows/launcher.c`, and creates:
+
+```
+desktop/dist/Quadband-Card-Studio-1.0.0-Windows-x64.zip
+desktop/dist/Quadband-Card-Studio-1.0.0-Windows-x64.zip.sha256
+```
+
+`windows/wheels.lock.json` records exact dependency versions, download URLs and hashes, including Windows-only Bluetooth dependencies. The build checks the target platform and dependency constraints rather than resolving against the Mac's platform. The Python runtime URL/hash is pinned in the build script. No Git commit, push or upload occurs.
+
+The ZIP includes GPLv3, branding and dependency notices, `dependencies.json`, `BUILD-INFO.json`, per-file checksums, setup instructions and a full archive of application/build/test source from the checkout. Python and wheel license files remain included. Third-party source provision before a public binary release is described in [RELEASING.txt](RELEASING.txt).
+
+## Validation
+
+For static checks on any host, install `pefile==2024.8.26` in the host environment and run:
+
+```sh
+python desktop/packaging/windows/verify.py desktop/dist/Quadband-Card-Studio-1.0.0-Windows-x64.zip
+```
+
+This validates every checksum, confirms the app's source matches the included source archive, checks x64 PE headers, confirms the GUI launcher has an icon, and checks imports against bundled DLLs and expected Windows system libraries. It does not substitute for running on Windows.
+
+On Windows, extract the entire ZIP, open PowerShell in the extracted directory, and run:
+
+```powershell
+$quadbandCheck = Start-Process .\QuadbandCardStudio.exe -ArgumentList '--smoke-test' -Wait -PassThru
+if ($quadbandCheck.ExitCode -ne 0) { throw 'Quadband startup check failed' }
+```
+
+This constructs all workspaces, imports Windows reader adapters and exits without discovering readers or modifying a card. Startup errors are written to `%LOCALAPPDATA%\Midwest Gadgets\Quadband Card Studio\startup-error.txt`. Next, open the app normally and perform the hardware checks in [VALIDATION.txt](VALIDATION.txt).
+
+The local build on October 27, 2026 passed static package checks and 90 application tests on the Mac (two optional hardware tests skipped). **It has not been launched on Windows and physical reader operation on Windows is unverified.** The package is unsigned. The existing native Windows PyInstaller recipe remains available when a Windows build machine or CI is available.
+
+References: [Python embeddable distribution](https://docs.python.org/3.13/using/windows.html#the-embeddable-package), [Python 3.13.17 files and hashes](https://www.python.org/downloads/release/python-31317/), [Zig downloads](https://ziglang.org/download/).
