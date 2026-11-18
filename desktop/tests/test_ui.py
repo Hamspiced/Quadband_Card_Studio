@@ -115,3 +115,15 @@ def test_uhf_module_reports_display_real_rssi_and_unknown_frequency(window):
     window.tag_received(tag)
     assert window.uhf_tags.item(0, 2).text() == 'Not reported'
     assert window.uhf_tags.item(0, 3).text() == '-55'
+
+
+def test_bulk_encode_tab_requires_record_and_tracks_results(window):
+    window.start_bulk()
+    assert 'Choose the record' in window.status.text() and not window.busy
+    window.bulk_result(True, 'AA · written, verified')
+    window.bulk_result(False, 'BB · failed')
+    assert window.bulk_totals.text() == '1 written · 1 failed'
+    window.bulk_phase('done', 'Done — remove tag AA')
+    assert window.bulk_prompt.text() == 'Done — remove tag AA'
+    window.clear_session()
+    assert window.bulk_totals.text() == '0 written · 0 failed' and not window.bulk_log.toPlainText()
