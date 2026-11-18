@@ -1,7 +1,6 @@
 name: Build and test
 on:
-  push:
-  pull_request:
+  # Manual only: run from the Actions tab (or `gh workflow run build.yml`).
   workflow_dispatch:
 permissions:
   contents: read
@@ -13,8 +12,8 @@ jobs:
         os: [windows-latest, ubuntu-24.04]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
           cache: pip
@@ -30,21 +29,27 @@ jobs:
           QT_QPA_PLATFORM: offscreen
       - run: python desktop/packaging/build.py
       - run: python desktop/packaging/smoke.py
-      - name: Upload native portable package
-        uses: actions/upload-artifact@v4
+      - name: Upload Windows package (unzipped, so the .exe is visible)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v7
         with:
-          name: Quadband-${{ runner.os }}
-          path: |
-            desktop/dist/*.zip
-            desktop/dist/*.tar.gz
+          name: Quadband-Windows
+          path: desktop/dist/QuadbandCardStudio/
+          if-no-files-found: error
+      - name: Upload Linux package
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v7
+        with:
+          name: Quadband-Linux
+          path: desktop/dist/*.tar.gz
           if-no-files-found: error
   macos:
-    runs-on: macos-14
+    runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: bash scripts/test.sh
       - run: bash scripts/build-app.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: Quadband-macOS
           path: dist/Quadband-Card-Studio-macOS.zip
@@ -52,13 +57,13 @@ jobs:
   source:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - run: python scripts/source-archive.py
       - run: python -m pip install build && python -m build desktop
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: Quadband-source-and-python
           path: |

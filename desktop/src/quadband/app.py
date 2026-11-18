@@ -24,6 +24,8 @@ class Worker(QThread):
     failed = Signal(str)
     tag = Signal(object)
     batch = Signal(bool, str)
+    phase = Signal(str, str)
+    encoded = Signal(bool, str)
 
     def __init__(self):
         super().__init__()
@@ -309,12 +311,15 @@ class MainWindow(QMainWindow):
         self.worker.failed.connect(self.failed)
         self.worker.tag.connect(self.tag_received)
         self.worker.batch.connect(self.batch_result)
+        self.worker.phase.connect(self.bulk_phase)
+        self.worker.encoded.connect(self.bulk_result)
         self.worker.start()
         self.worker.ready.wait(2)
         self.busy, self.stop_flag, self.callback, self.closing, self.closed_ready = False, None, None, False, False
         self.snapshot = self.ndef_area = self.profile = self.lf_card = self.reader_snapshot = None
         self.records, self.tags, self.settings_inputs = [], {}, {}
-        self.batch_success = self.batch_failure = 0
+        self.batch_success = self.batch_failure = self.bulk_success = self.bulk_failure = 0
+        self.bulk_records = []
         self.build_ui()
         self.apply_theme()
         QApplication.instance().styleHints().colorSchemeChanged.connect(self.system_appearance_changed)
@@ -479,6 +484,28 @@ class MainWindow(QMainWindow):
         wl.addWidget(button('Write records & verify', self.write_records, True))
         wl.addWidget(text_label('Read the target first. Writes replace its record message and require an already NFC-formatted Classic 1K card.'))
         tabs.addTab(write, 'Write records')
+        bulk = QWidget()
+        bl = QVBoxLayout(bulk)
+        self.bulk_tag_type = combo(['MIFARE Classic 1K'])
+        self.bulk_summary = text_label('No record chosen yet.')
+        bl.addWidget(group('What to write', row(text_label('Tag type'), self.bulk_tag_type),
+                           row(button('Choose record…', self.choose_bulk_record), self.bulk_summary)))
+        self.bulk_erase = QCheckBox('Overwrite tags that already hold other data when formatting')
+        bl.addWidget(self.bulk_erase)
+        self.bulk_prompt = QLabel('Choose a record, then start.')
+        self.bulk_prompt.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.bulk_prompt.setWordWrap(True)
+        self.bulk_prompt.setMinimumHeight(120)
+        self.bulk_phase('idle', 'Choose a record, then start.')
+        bl.addWidget(self.bulk_prompt)
+        bl.addWidget(button('Start bulk encoding', self.start_bulk, True))
+        self.bulk_totals = text_label('0 written · 0 failed')
+        bl.addWidget(self.bulk_totals)
+        self.bulk_log = editor(True, 160)
+        self.bulk_log.setMaximumBlockCount(1000)
+        bl.addWidget(self.bulk_log)
+        bl.addWidget(text_label('Present a tag, wait for Done, remove it, present the next. Blank tags are formatted automatically; every tag is verified by reading it back, and a tag must leave the reader before the next is written. If a tag fails or several tags are on the reader, nothing is counted as written. Press Stop to finish.'))
+        tabs.addTab(bulk, 'Bulk encode')
         copy = QWidget()
         cl = QVBoxLayout(copy)
         self.profile_label = text_label('Scan card or upload card credentials to choose a source.')
@@ -629,6 +656,51 @@ class MainWindow(QMainWindow):
             self.run(job, self.show_snapshot, 'Writing records and verifying…')
         except Exception as exc:
             self.failed(str(exc))
+
+    def choose_bulk_record(self):
+        dialog = RecordDialog(self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.bulk_records = [dialog.record]
+            title, value = dialog.record.display()
+            self.bulk_summary.setText(f'{title} · {value.replace(chr(10), " ")[:120]} · {len(ndef.encode(self.bulk_records))} bytes')
+            self.bulk_phase('idle', 'Ready. Press Start bulk encoding.')
+
+    def start_bulk(self):
+        try:
+            require(bool(self.bulk_records), 'Choose the record to write first.')
+            require(bool(self.hf_readers.currentText()), 'Select an HF reader first.')
+            records, name, key, erase = list(self.bulk_records), self.hf_readers.currentText(), self.key(), self.bulk_erase.isChecked()
+            ndef.encode(records)
+            require(len(ndef.encode(records)) <= 716, 'This record is too large for a Classic 1K tag.')
+            if not self.review('Bulk encode', f'Write {self.bulk_summary.text()} to every tag you present?\n'
+                               'Blank factory-key tags are formatted for NFC first'+(' (existing data will be overwritten).' if erase else '.')+'\n'
+                               'Each tag is verified before the next one is accepted. Press Stop to finish.'):
+                return
+            self.stop_flag = StopFlag()
+            stop = self.stop_flag
+            self.snapshot = self.ndef_area = None
+            self.run(lambda: hf.encode_forever(lambda: self.service.hf_session(name), records, key, stop,
+                                               self.worker.phase.emit, self.worker.encoded.emit, erase_data=erase),
+                     self.bulk_stopped, 'Present a tag.', graceful=True)
+        except Exception as exc:
+            self.failed(str(exc))
+
+    def bulk_stopped(self, _):
+        self.bulk_phase('idle', f'Stopped · {self.bulk_success} written · {self.bulk_failure} failed')
+        self.note('Bulk encoding stopped.')
+
+    def bulk_phase(self, state, text):
+        colors = {'idle': '#5f6b7a', 'ready': '#1f6feb', 'writing': '#b26a00', 'done': '#1a7f37', 'error': '#cf222e', 'warn': '#b26a00', 'wait': '#5f6b7a'}
+        self.bulk_prompt.setText(text)
+        self.bulk_prompt.setStyleSheet(f'font-size: 26px; font-weight: 600; color: {colors.get(state, "#5f6b7a")};')
+        if state == 'error':
+            QApplication.beep()
+
+    def bulk_result(self, success, detail):
+        self.bulk_success += int(success)
+        self.bulk_failure += int(not success)
+        self.bulk_totals.setText(f'{self.bulk_success} written · {self.bulk_failure} failed')
+        self.bulk_log.appendPlainText(datetime.now().strftime('%H:%M:%S')+' · '+('OK' if success else 'FAILED')+' · '+detail.replace('\n', ' '))
 
     def use_profile(self):
         try:
@@ -1051,7 +1123,7 @@ class MainWindow(QMainWindow):
         self.records, self.tags = [], {}
         for widget in [*self.tracks, self.swipe_raw, self.swipe_result, self.hf_info, self.block_data,
                        self.uhf_selected, self.uhf_data, self.uhf_new_epc, self.uhf_memory,
-                       self.lf_result, self.batch_log]:
+                       self.lf_result, self.batch_log, self.bulk_log]:
             widget.clear()
         self.hf_key.setText('FFFFFFFFFFFF')
         self.uhf_password.setText('00000000')
@@ -1059,6 +1131,11 @@ class MainWindow(QMainWindow):
         self.uhf_tags.setRowCount(0)
         self.batch_success = self.batch_failure = 0
         self.batch_totals.setText('0 successes · 0 failures')
+        self.bulk_success = self.bulk_failure = 0
+        self.bulk_records = []
+        self.bulk_totals.setText('0 written · 0 failed')
+        self.bulk_summary.setText('No record chosen yet.')
+        self.bulk_phase('idle', 'Choose a record, then start.')
         self.profile_label.setText('Scan card or upload card credentials to choose a source.')
         self.update_records()
         self.note('Session cleared.')

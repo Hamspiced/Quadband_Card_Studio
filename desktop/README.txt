@@ -75,6 +75,15 @@ python -m pytest desktop/tests
 python -m ruff check desktop/src desktop/tests
 ```
 
+## Bulk encode (HF Workspace, MIFARE Classic 1K, PC/SC readers)
+
+**HF Workspace → Bulk encode** writes the same record to tag after tag. Choose the tag type and a record, press **Start bulk encoding**, then follow the large prompt: *Present a tag → Writing → Done, remove the tag*. Press **Stop** to finish.
+
+- Blank factory-key tags are formatted for NFC records automatically (MAD1 directory plus 15 record sectors) and then written. Formatting only touches tags whose every sector still has factory keys and access bits, and it refuses tags that already hold data unless **Overwrite tags that already hold other data** is ticked. Formatting needs a PC/SC reader; the Chameleon can only encode tags that are already formatted.
+- Every tag is read back and its identity re-checked before it counts. A tag must leave the reader after each outcome, and a UID already encoded in the session is skipped, not rewritten.
+- If the reader reports trouble or an identity change (a tag moved, or several tags are on the antenna), nothing is written or counted. Remove all tags and present one. The reader's own anti-collision picks one tag when several are present, so keep exactly one tag in the field.
+- Failed tags are listed with their UID; set them aside and continue.
+
 Tests simulate readers; they do not write physical cards. The UI test uses Qt's offscreen backend. Protocol tests cover framing, partial responses, timeout/disconnect, NFC access bits, staged NDEF writes, protected blocks, batch continuation/removal, EPC selection/control bits, and password-free LF commands.
 
 Optional **read-only** hardware tests are documented in `tests/test_hardware.py` and require explicit environment variables. Passing unit tests is not a claim of Windows/Linux hardware validation. See `../docs/VALIDATION.txt` for the current evidence.

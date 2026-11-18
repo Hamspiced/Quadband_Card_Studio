@@ -92,6 +92,12 @@ class PCSC:
         await self.authenticate(block, credential)
         await self.command(bytes([255, 0xD6, 0, block, 16])+data, 0)
 
+    async def write_trailer(self, block, data, credential):
+        # Only used by NFC formatting of blank factory-key cards; callers verify the result.
+        require(block in range(3, 64, 4) and len(data) == 16, 'A sector trailer is exactly 16 bytes.')
+        await self.authenticate(block, credential)
+        await self.command(bytes([255, 0xD6, 0, block, 16])+data, 0)
+
     async def reset_authentication(self):
         # Reconnecting with a reset revives Classic cards halted by a failed key.
         from smartcard.scard import SCARD_RESET_CARD

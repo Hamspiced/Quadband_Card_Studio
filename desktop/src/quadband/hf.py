@@ -10,6 +10,10 @@ def data_block(block):
     return isinstance(block, int) and 1 <= block < 64 and block % 4 != 3
 
 
+class NotFormatted(CardError):
+    """The card is readable but has no NFC Forum directory."""
+
+
 DATA_BLOCKS = tuple(b for b in range(64) if data_block(b))
 FACTORY = (b'\xff'*6, 0x60)
 
@@ -89,10 +93,11 @@ class ClassicNDEF:
         require(self.card.classic and all(b in snapshot.blocks for b in (1, 2, 3)),
                 'The card directory could not be read. Try the standard keys or enter the card key.')
         mad, trailer = snapshot.blocks[1]+snapshot.blocks[2], snapshot.blocks[3]
-        require(len(mad) == 32 and len(trailer) == 16 and trailer[9] & 128 and trailer[9] & 3 == 1
-                and mad_crc(mad[1:]) == mad[0], 'This card is not formatted for NFC records. Use Advanced to inspect data.')
+        if not (len(mad) == 32 and len(trailer) == 16 and trailer[9] & 128 and trailer[9] & 3 == 1 and mad_crc(mad[1:]) == mad[0]):
+            raise NotFormatted('This card is not formatted for NFC records. Use Advanced to inspect data.')
         sectors = [s for s in range(1, 16) if mad[s*2:s*2+2] == b'\x03\xe1']
-        require(bool(sectors), 'The directory has no NFC record area.')
+        if not sectors:
+            raise NotFormatted('The directory has no NFC record area.')
         self.blocks = [s*4+i for s in sectors for i in range(3)]
         require(all(len(snapshot.blocks.get(b, b'')) == 16 for b in self.blocks), 'Some NFC data blocks could not be read.')
         self.memory = b''.join(snapshot.blocks[b] for b in self.blocks)
@@ -148,16 +153,22 @@ class ClassicClient:
         card = await self.backend.identify()
         require(card.classic, 'Card identified, but memory operations require MIFARE Classic 1K.')
         snapshot = Snapshot(card)
+        factory_seen = False
         for sector in range(16):
             await asyncio.sleep(0)
             standard = (bytes.fromhex('A0A1A2A3A4A5' if sector == 0 else 'D3F7D3F7D3F7'), 0x60)
             candidates = ([standard, FACTORY] if supplied == FACTORY else [supplied, standard, FACTORY]) if automatic else [supplied]
+            if factory_seen and FACTORY in candidates:
+                # A blank card uses factory keys everywhere; skip a failed authentication per sector.
+                candidates.remove(FACTORY)
+                candidates.insert(0, FACTORY)
             chosen, error = None, 'No configured key could read this sector.'
             for credential in dict.fromkeys(candidates):
                 try:
                     snapshot.blocks[sector*4] = await self.backend.read_block(sector*4, credential)
                     chosen = credential
                     snapshot.keys[sector] = credential
+                    factory_seen = credential == FACTORY
                     break
                 except AuthenticationError as exc:
                     error = str(exc)
@@ -241,6 +252,63 @@ class ClassicClient:
         except Exception as exc:
             raise CardError(f'Record write not verified; the NFC message may be empty or incomplete. Read the card again. {exc}') from exc
 
+    async def format_ndef(self, snapshot, supplied=FACTORY, erase_data=False):
+        """Format a blank factory-key Classic 1K for NFC records (MAD1 plus 15 NDEF sectors) and verify it.
+
+        Only cards whose sectors all still use factory keys and factory access bits are touched. Unless
+        erase_data is set, existing data must already be empty.
+        """
+        backend = self.backend
+        require(hasattr(backend, 'write_trailer'), 'Formatting needs a PC/SC reader; this reader can only write cards that are already NFC-formatted.')
+        card = snapshot.card
+        require(card.classic and not snapshot.errors and len(snapshot.blocks) == 64,
+                'The tag could not be fully read, so it was not formatted. It may use unknown keys.')
+        require(all(snapshot.keys.get(s) == FACTORY and snapshot.blocks[s*4+3][6:9] == bytes.fromhex('FF0780') for s in range(16)),
+                'This tag is locked with non-factory keys, so it was not formatted.')
+        data = [b for b in range(1, 64) if data_block(b)]
+        require(erase_data or all(not any(snapshot.blocks[b]) for b in data),
+                'This tag already holds data. Enable overwriting tags that already hold data to format it.')
+        mad = bytearray(b'\0\0' + b'\3\xe1'*15)
+        mad[0] = mad_crc(mad[1:])
+        trailers = {s*4+3: bytes.fromhex('D3F7D3F7D3F77F078840FFFFFFFFFFFF') for s in range(1, 16)}
+        trailers[3] = bytes.fromhex('A0A1A2A3A4A5787788C1FFFFFFFFFFFF')
+        order = [b for b in sorted(trailers) if b != 3] + [3]
+        plan = {1: bytes(mad[:16]), 2: bytes(mad[16:]), 4: b'\3\0\xfe'.ljust(16, b'\0')}
+        plan.update({b: bytes(16) for b in data if b not in plan})
+        done = 0
+        try:
+            for block, value in plan.items():
+                await asyncio.sleep(0)
+                if snapshot.blocks[block] != value:
+                    await self.update(block, value, FACTORY, card)
+            for block in order:
+                await asyncio.sleep(0)
+                await self.same_card(card)
+                await backend.write_trailer(block, trailers[block], FACTORY)
+                done += 1
+                check = await backend.read_block(block, (trailers[block][:6], 0x60))
+                require(check[6:10] == trailers[block][6:10], f'Sector {block//4} access settings did not verify.')
+            result = await self.read(supplied)
+            area = ClassicNDEF(result)
+            require(result.card == card and not area.records and area.writable, 'Formatted tag did not verify.')
+            return result
+        except Exception as exc:
+            raise CardError(f'Formatting did not complete ({done}/16 sectors secured); set this tag aside. {exc}') from exc
+
+    async def encode_tag(self, records, supplied=FACTORY, erase_data=False):
+        """Format if needed, write the records and verify. Returns (snapshot, formatted, written)."""
+        snapshot = await self.read(supplied)
+        formatted = False
+        try:
+            area = ClassicNDEF(snapshot)
+        except NotFormatted:
+            snapshot = await self.format_ndef(snapshot, supplied, erase_data)
+            area, formatted = ClassicNDEF(snapshot), True
+        require(area.writable, 'NFC area is read-only with the available keys.')
+        if area.records == records:
+            return snapshot, formatted, False
+        return await self.write_records(records, area, supplied), formatted, True
+
 
 async def copy_forever(client_factory, profile, supplied, stop, progress, result, interval=.4):
     """Require an absent-card observation initially and after EVERY outcome, even identical UIDs.
@@ -270,4 +338,61 @@ async def copy_forever(client_factory, profile, supplied, stop, progress, result
         except Exception as exc:
             removed = False
             progress(f'Reader unavailable: {exc} Reconnect, then remove and present a card.')
+        await asyncio.sleep(interval)
+
+
+async def encode_forever(client_factory, records, supplied, stop, phase, result, interval=.3, erase_data=False, settle=.15):
+    """Encode the same records onto one tag after another until stopped.
+
+    phase(state, text) drives the on-screen prompt; result(success, detail) feeds the tally.
+    A tag must leave the reader after every outcome before the next is accepted, a tag whose identity
+    changes (moved, swapped, or a second tag entering the field) is never written, and a UID already
+    encoded this session is skipped rather than rewritten. Reader trouble and unreadable tags (for
+    example several tags on the antenna) are reported without being counted as tag failures.
+    """
+    ndef.encode(records)
+    armed, done, hold, shown = True, set(), ('wait', 'Remove the tag'), None
+
+    def show(state, text):
+        nonlocal shown
+        if shown != (state, text):
+            shown = (state, text)
+            phase(state, text)
+
+    while not stop.is_set():
+        try:
+            async with client_factory() as client:
+                backend = client.backend
+                if not await backend.present():
+                    armed = True
+                    show('ready', 'Present a tag')
+                elif not armed:
+                    show(*hold)
+                else:
+                    armed = False
+                    hold = ('wait', 'Remove the tag')
+                    card = await backend.identify()
+                    await asyncio.sleep(settle)
+                    require(await backend.identify() == card, 'The tag moved or more than one tag is on the reader.')
+                    uid = card.uid.hex().upper()
+                    if uid in done:
+                        hold = ('warn', f'Tag {uid} was already encoded. Remove it and present a new one')
+                        show(*hold)
+                    else:
+                        show('writing', f'Writing {uid}… keep the tag still')
+                        try:
+                            _, formatted, written = await client.encode_tag(records, supplied, erase_data)
+                            require(await backend.identify() == card, 'The tag changed while writing.')
+                        except Exception as exc:
+                            result(False, f'{uid} · {exc}')
+                            hold = ('error', f'Failed — remove tag {uid} and set it aside')
+                        else:
+                            done.add(uid)
+                            result(True, f'{uid} · ' + ('formatted and written' if formatted else 'written' if written else 'already correct') + ', verified')
+                            hold = ('done', f'Done — remove tag {uid}')
+                        show(*hold)
+        except Exception as exc:
+            armed = False
+            hold = ('warn', f'{exc} If several tags are on the reader, remove them all, then present one tag')
+            show(*hold)
         await asyncio.sleep(interval)
