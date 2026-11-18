@@ -1,7 +1,7 @@
 """Exclusive desktop hardware session. SPDX-License-Identifier: GPL-3.0-only"""
 import asyncio
-from .common import require
-from . import transports, magstripe, chameleon, uhf, m100, pcsc
+from .common import CardError, NoCard, require
+from . import transports, magstripe, chameleon, uhf, m100, pcsc, type2
 
 
 class Service:
@@ -73,9 +73,16 @@ class Service:
         from .hf import Snapshot
         async with self.hf_session(name) as client:
             info = await client.backend.identify()
-            if not info.classic:
-                return Snapshot(info)
-            return await client.read(key)
+            if info.classic:
+                return await client.read(key)
+            if len(info.uid) == 7 and hasattr(client.backend, 'read_pages'):
+                try:
+                    return await type2.Type2Client(client.backend).read()
+                except NoCard:
+                    raise
+                except CardError:
+                    pass  # not an NTAG: identity only
+            return Snapshot(info)
 
     async def close(self):
         for family in ('msr', 'uhf', 'chameleon'):

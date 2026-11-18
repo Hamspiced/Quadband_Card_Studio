@@ -2,7 +2,7 @@
 import asyncio
 import sys
 from contextlib import asynccontextmanager
-from .common import NoCard, AuthenticationError, require
+from .common import CardError, NoCard, AuthenticationError, require
 from .hf import CardInfo, ClassicClient, data_block
 
 
@@ -97,6 +97,34 @@ class PCSC:
         require(block in range(3, 64, 4) and len(data) == 16, 'A sector trailer is exactly 16 bytes.')
         await self.authenticate(block, credential)
         await self.command(bytes([255, 0xD6, 0, block, 16])+data, 0)
+
+    async def read_pages(self, page):
+        # NFC Forum Type 2 (NTAG): four 4-byte pages per read; no authentication.
+        require(0 <= page < 256, 'Invalid tag page.')
+        return await self.command(bytes([255, 0xB0, 0, page, 16]), 16)
+
+    async def write_page(self, page, data):
+        # Pages 0-2 hold the UID and the permanent lock bytes and are never written.
+        require(3 <= page < 256 and len(data) == 4, 'Only 4-byte tag pages from page 3 can be written.')
+        await self.command(bytes([255, 0xD6, 0, page, 4])+data, 0)
+
+    async def get_version(self):
+        """NTAG GET_VERSION (60h), or None when this reader will not pass the command through."""
+        wrapped, raw = bytes.fromhex('FF00000004D4400160'), bytes.fromhex('FF0000000160')
+        for apdu in ([wrapped, raw] if 'ACR122' in self.name.upper() else [raw, wrapped]):
+            data = b''
+            try:
+                data = await self.command(apdu)
+            except NoCard:
+                raise
+            except CardError:
+                pass
+            if data[:3] == b'\xd5\x41\x00':
+                data = data[3:]
+            if len(data) == 8 and data[:3] == b'\0\4\4':
+                return data
+            await self.reset_authentication()
+        return None
 
     async def reset_authentication(self):
         # Reconnecting with a reset revives Classic cards halted by a failed key.
