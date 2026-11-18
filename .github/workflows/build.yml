@@ -1,7 +1,6 @@
 name: Build and test
 on:
-  push:
-  pull_request:
+  # Manual only: run from the Actions tab (or `gh workflow run build.yml`).
   workflow_dispatch:
 permissions:
   contents: read
@@ -30,13 +29,19 @@ jobs:
           QT_QPA_PLATFORM: offscreen
       - run: python desktop/packaging/build.py
       - run: python desktop/packaging/smoke.py
-      - name: Upload native portable package
+      - name: Upload Windows package (unzipped, so the .exe is visible)
+        if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
-          name: Quadband-${{ runner.os }}
-          path: |
-            desktop/dist/*.zip
-            desktop/dist/*.tar.gz
+          name: Quadband-Windows
+          path: desktop/dist/QuadbandCardStudio/
+          if-no-files-found: error
+      - name: Upload Linux package
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Quadband-Linux
+          path: desktop/dist/*.tar.gz
           if-no-files-found: error
   macos:
     runs-on: macos-14
