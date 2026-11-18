@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QHBoxLayout, 
     QLabel, QPushButton, QComboBox, QLineEdit, QPlainTextEdit, QListWidget, QStackedWidget, QTabWidget,
     QGroupBox, QScrollArea, QSpinBox, QCheckBox, QMessageBox, QFileDialog, QDialog, QDialogButtonBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QSizePolicy)
-from . import __version__, magstripe, hf, ndef, chameleon, pcsc, reader_tools
+from . import __version__, magstripe, hf, ndef, chameleon, pcsc, reader_tools, type2
 from .common import CardError, require, hex_bytes, load_json, save_json
 from .service import Service, StopFlag, call_sync
 
@@ -475,6 +475,9 @@ class MainWindow(QMainWindow):
         tabs.addTab(read, 'Read')
         write = QWidget()
         wl = QVBoxLayout(write)
+        self.write_tag_type = combo(type2.tag_types())
+        self.write_erase = QCheckBox('Overwrite tags that already hold other data when formatting')
+        wl.addWidget(group('Target tag', row(text_label('Tag type'), self.write_tag_type), self.write_erase))
         self.record_list = QListWidget()
         self.record_list.setMinimumHeight(200)
         wl.addWidget(self.record_list)
@@ -482,11 +485,12 @@ class MainWindow(QMainWindow):
         self.record_size = text_label('0 records')
         wl.addWidget(self.record_size)
         wl.addWidget(button('Write records & verify', self.write_records, True))
-        wl.addWidget(text_label('Read the target first. Writes replace its record message and require an already NFC-formatted Classic 1K card.'))
+        wl.addWidget(text_label('MIFARE Classic 1K: read the target first; writes replace its record message and need an already NFC-formatted card. NTAG213 / 215 / 216 (PC/SC readers): no read needed; a tag that is not NFC-formatted is formatted first (capability container and empty NDEF message), then the records are written and read back.'))
+        self.write_tag_type.currentIndexChanged.connect(lambda *_: self.update_records())
         tabs.addTab(write, 'Write records')
         bulk = QWidget()
         bl = QVBoxLayout(bulk)
-        self.bulk_tag_type = combo(['MIFARE Classic 1K'])
+        self.bulk_tag_type = combo(type2.tag_types())
         self.bulk_summary = text_label('No record chosen yet.')
         bl.addWidget(group('What to write', row(text_label('Tag type'), self.bulk_tag_type),
                            row(button('Choose record…', self.choose_bulk_record), self.bulk_summary)))
@@ -504,7 +508,8 @@ class MainWindow(QMainWindow):
         self.bulk_log = editor(True, 160)
         self.bulk_log.setMaximumBlockCount(1000)
         bl.addWidget(self.bulk_log)
-        bl.addWidget(text_label('Present a tag, wait for Done, remove it, present the next. Blank tags are formatted automatically; every tag is verified by reading it back, and a tag must leave the reader before the next is written. If a tag fails or several tags are on the reader, nothing is counted as written. Press Stop to finish.'))
+        bl.addWidget(text_label('Present a tag, wait for Done, remove it, present the next. Tags that are not NFC-formatted are formatted automatically (blank Classic 1K; NTAGs get their capability container and an empty NDEF message); every tag is verified by reading it back, and a tag must leave the reader before the next is written. If a tag fails or several tags are on the reader, nothing is counted as written. Press Stop to finish.'))
+        self.bulk_tag_type.currentIndexChanged.connect(lambda *_: self.bulk_describe())
         tabs.addTab(bulk, 'Bulk encode')
         copy = QWidget()
         cl = QVBoxLayout(copy)
@@ -579,7 +584,27 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self.failed(str(exc))
 
+    def show_type2(self, snapshot):
+        self.snapshot, self.ndef_area = snapshot, None
+        info, spec = snapshot.card, snapshot.spec
+        lines = [f'{spec.name} · NFC Forum Type 2 · {spec.user} bytes' + ('' if snapshot.verified else ' (type not confirmed by the reader)'),
+                 'UID: '+info.uid.hex(':').upper()]
+        try:
+            self.ndef_area = type2.Type2NDEF(snapshot)
+            lines += [f'NFC records: {self.ndef_area.size} / {self.ndef_area.capacity} bytes',
+                      'Writable: '+('Yes' if self.ndef_area.writable else 'No. '+self.ndef_area.problem)]
+            for i, record in enumerate(self.ndef_area.records):
+                title, value = record.display()
+                lines += [f'\nRecord {i+1} · {title}', value]
+        except CardError as exc:
+            lines.append(str(exc)+' Writing records will format it.')
+        self.hf_info.setPlainText('\n'.join(lines))
+        self.block_table.setRowCount(0)
+        self.note('Read complete.')
+
     def show_snapshot(self, snapshot):
+        if isinstance(snapshot, type2.Type2Snapshot):
+            return self.show_type2(snapshot)
         self.snapshot, self.ndef_area = snapshot, None
         info = snapshot.card
         lines = ['MIFARE Classic 1K' if info.classic else 'Other NFC card (identity only)',
@@ -619,7 +644,8 @@ class MainWindow(QMainWindow):
             title, value = r.display()
             self.record_list.addItem(title+' · '+value.replace('\n', ' ')[:160])
         try:
-            self.record_size.setText(f'{len(self.records)} records · {len(ndef.encode(self.records)) if self.records else 0} bytes')
+            tag = self.write_tag_type.currentData()
+            self.record_size.setText(f'{len(self.records)} records · {len(ndef.encode(self.records)) if self.records else 0} of {type2.capacity(tag)} bytes ({tag})')
         except CardError as exc:
             self.record_size.setText(str(exc))
 
@@ -643,10 +669,33 @@ class MainWindow(QMainWindow):
         else:
             self.note('Read an NFC-formatted target first.')
 
+    def write_ntag(self):
+        tag, name, erase = self.write_tag_type.currentData(), self.hf_readers.currentText(), self.write_erase.isChecked()
+        records = list(self.records)
+        require(bool(records), 'Add at least one record first.')
+        require(bool(name), 'Select an HF reader first.')
+        size = type2.check_fit(tag, records)
+        if not self.review('Write NFC records', f'Write {len(records)} record(s), {size} bytes, to the {tag} on the reader?\n'
+                           'A tag that is not NFC-formatted is formatted first'+(' (existing data will be overwritten).' if erase else '.')+'\n'
+                           'The result is read back and verified.'):
+            return
+        async def job():
+            async with self.service.hf_session(name) as client:
+                return await type2.Type2Client(client.backend).encode_tag(tag, records, erase)
+        def done(outcome):
+            snapshot, formatted, written = outcome
+            self.show_snapshot(snapshot)
+            self.note(('Formatted and written' if formatted else 'Written' if written else 'Already correct')+', verified.')
+        self.snapshot = self.ndef_area = None
+        self.run(job, done, f'Encoding {tag} and verifying…')
+
     def write_records(self):
         try:
+            if self.write_tag_type.currentData() != hf.CLASSIC_1K:
+                return self.write_ntag()
             require(self.ndef_area is not None, 'Read the target’s NFC records first.')
             records, expected, key, name = list(self.records), self.ndef_area, self.key(), self.hf_readers.currentText()
+            require(isinstance(expected, hf.ClassicNDEF), 'Read a MIFARE Classic 1K target, or choose an NTAG tag type.')
             expected.replacing(records)
             if not self.review('Write NFC records', f'Replace the records on card {expected.card.uid.hex().upper()} with {len(records)} queued record(s)?\nUID, keys and sector trailers remain unchanged.'):
                 return
@@ -662,25 +711,34 @@ class MainWindow(QMainWindow):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.bulk_records = [dialog.record]
             title, value = dialog.record.display()
-            self.bulk_summary.setText(f'{title} · {value.replace(chr(10), " ")[:120]} · {len(ndef.encode(self.bulk_records))} bytes')
+            self.bulk_describe()
             self.bulk_phase('idle', 'Ready. Press Start bulk encoding.')
+
+    def bulk_describe(self):
+        if not self.bulk_records:
+            return
+        title, value = self.bulk_records[0].display()
+        tag = self.bulk_tag_type.currentData()
+        size = len(ndef.encode(self.bulk_records))
+        fit = '' if size <= type2.capacity(tag) else f' · too large for {tag} ({type2.capacity(tag)} bytes)'
+        self.bulk_summary.setText(f'{title} · {value.replace(chr(10), " ")[:120]} · {size} bytes{fit}')
 
     def start_bulk(self):
         try:
             require(bool(self.bulk_records), 'Choose the record to write first.')
             require(bool(self.hf_readers.currentText()), 'Select an HF reader first.')
             records, name, key, erase = list(self.bulk_records), self.hf_readers.currentText(), self.key(), self.bulk_erase.isChecked()
-            ndef.encode(records)
-            require(len(ndef.encode(records)) <= 716, 'This record is too large for a Classic 1K tag.')
-            if not self.review('Bulk encode', f'Write {self.bulk_summary.text()} to every tag you present?\n'
-                               'Blank factory-key tags are formatted for NFC first'+(' (existing data will be overwritten).' if erase else '.')+'\n'
+            tag = self.bulk_tag_type.currentData()
+            type2.check_fit(tag, records)
+            if not self.review('Bulk encode', f'Write {self.bulk_summary.text()} to every {tag} you present?\n'
+                               'Tags that are not NFC-formatted are formatted first'+(' (existing data will be overwritten).' if erase else '.')+'\n'
                                'Each tag is verified before the next one is accepted. Press Stop to finish.'):
                 return
             self.stop_flag = StopFlag()
             stop = self.stop_flag
             self.snapshot = self.ndef_area = None
             self.run(lambda: hf.encode_forever(lambda: self.service.hf_session(name), records, key, stop,
-                                               self.worker.phase.emit, self.worker.encoded.emit, erase_data=erase),
+                                               self.worker.phase.emit, self.worker.encoded.emit, erase_data=erase, tag=tag),
                      self.bulk_stopped, 'Present a tag.', graceful=True)
         except Exception as exc:
             self.failed(str(exc))
