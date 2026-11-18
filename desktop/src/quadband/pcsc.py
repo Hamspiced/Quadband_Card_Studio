@@ -18,6 +18,11 @@ def find_reader(name):
     return selected
 
 
+# SCARD_W_UNRESPONSIVE_CARD, SCARD_W_UNPOWERED_CARD, SCARD_W_REMOVED_CARD: what the reader reports while a tag
+# is leaving the field. The tag cannot be used, so it counts as no card rather than as a failure.
+GONE = {0x80100066, 0x80100067, 0x80100069}
+
+
 class PCSC:
     def __init__(self, name):
         self.name, self.connection, self.transaction = name, None, False
@@ -34,8 +39,10 @@ class PCSC:
         except NoCardException as exc:
             connection.disconnect()
             raise NoCard('Place one HF card on the reader.') from exc
-        except Exception:
+        except Exception as exc:
             connection.disconnect()
+            if getattr(exc, 'hresult', -1) & 0xFFFFFFFF in GONE:
+                raise NoCard('Place one HF card on the reader.') from exc
             raise
         self.connection, self.transaction = connection, True
 

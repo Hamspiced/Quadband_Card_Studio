@@ -119,7 +119,7 @@ def test_uhf_module_reports_display_real_rssi_and_unknown_frequency(window):
 
 def test_bulk_encode_tab_requires_record_and_tracks_results(window):
     window.start_bulk()
-    assert 'Choose the record' in window.status.text() and not window.busy
+    assert 'Add at least one record' in window.status.text() and not window.busy
     window.bulk_result(True, 'AA · written, verified')
     window.bulk_result(False, 'BB · failed')
     assert window.bulk_totals.text() == '1 written · 1 failed'
@@ -135,12 +135,32 @@ def test_tag_type_dropdowns_offer_ntags_and_check_capacity(window):
         assert [box.itemData(i) for i in range(box.count())] == expected
     window.hf_readers.addItem('Test reader')
     window.bulk_records = [ndef.Record.text('x'*300)]
+    window.bulk_describe()
     window.bulk_tag_type.setCurrentIndex(1)
     assert 'too large for NTAG213' in window.bulk_summary.text()
     window.start_bulk()
     assert 'NTAG213 holds' in window.status.text() and not window.busy
     window.bulk_tag_type.setCurrentIndex(3)
     assert 'too large' not in window.bulk_summary.text()
+
+
+def test_bulk_encode_takes_up_to_three_mixed_records_and_reports_overflow(window):
+    window.hf_readers.addItem('Test reader')
+    window.bulk_records = [ndef.Record.uri('https://example.com'), ndef.Record.text('hello'), ndef.Record.text('x'*150)]
+    window.bulk_describe()
+    for index, name in enumerate(['MIFARE Classic 1K', 'NTAG213', 'NTAG215', 'NTAG216']):
+        window.bulk_tag_type.setCurrentIndex(index)
+        assert window.bulk_list.count() == 3 and '3 of 3 records' in window.bulk_summary.text()
+        assert ('too large for' in window.bulk_summary.text()) == (name == 'NTAG213')
+    window.bulk_tag_type.setCurrentIndex(1)
+    window.start_bulk()
+    assert 'NTAG213 holds' in window.status.text() and not window.busy
+    window.add_bulk_record()
+    assert 'up to 3 records' in window.status.text() and len(window.bulk_records) == 3
+    window.bulk_list.setCurrentRow(0)
+    window.remove_bulk_record()
+    assert len(window.bulk_records) == 2 and window.bulk_list.count() == 2
+    assert all('bytes' in box.itemText(i) for box in (window.write_tag_type, window.bulk_tag_type) for i in range(box.count()))
     window.records = [ndef.Record.text('hello')]
     window.write_tag_type.setCurrentIndex(2)
     assert 'of 492 bytes (NTAG215)' in window.record_size.text()
