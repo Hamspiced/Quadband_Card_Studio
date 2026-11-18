@@ -36,7 +36,7 @@ class NTAG:
         self.pages[dyn+1] = bytes.fromhex('000000FF')
         self.info = hf.CardInfo(uid, ATR)
         self.version = bytes([0, 4, 4, 2, 1, 0, self.spec.version, 3])
-        self.writes, self.reject = [], None
+        self.writes, self.reads, self.reject = [], [], None
 
     async def identify(self):
         return self.info
@@ -48,6 +48,7 @@ class NTAG:
         return self.version
 
     async def read_pages(self, page):
+        self.reads.append(page)
         if page+4 > len(self.pages):
             raise CardError('Card access failed (6300); check key, permissions and placement.')
         return b''.join(self.pages[page:page+4])
@@ -153,6 +154,20 @@ async def test_size_is_checked_for_every_type():
     big = [ndef.Record.text('long '*160)]   # needs the three-byte TLV length
     snapshot, _, _ = await client(NTAG('NTAG216')).encode_tag('NTAG216', big)
     assert type2.Type2NDEF(snapshot).records == big
+
+
+@pytest.mark.parametrize('name', list(type2.TAGS))
+async def test_short_message_does_not_read_the_whole_memory(name):
+    tag = NTAG(name)
+    await client(tag).encode_tag(name, RECORDS)
+    # head, first data chunk, config, then only the written pages again to verify.
+    assert len(tag.reads) <= 7 and len(tag.writes) <= 8
+    tag.reads.clear()
+    snapshot = await client(tag).read(name)
+    assert not snapshot.complete and len(tag.reads) <= 4
+    assert type2.Type2NDEF(snapshot).records == RECORDS
+    full = await client(tag).read(name, full=True)
+    assert full.complete and len(tag.reads) > 20
 
 
 @pytest.mark.parametrize('scenario', ['static', 'dynamic', 'password', 'cc-read-only'])

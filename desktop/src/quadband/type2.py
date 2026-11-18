@@ -89,6 +89,7 @@ class Type2Snapshot:
     tail: bytes         # dynamic lock page, CFG0, CFG1, PWD (pages dynamic_lock ..+3)
     blocks: dict = field(default_factory=dict)
     errors: dict = field(default_factory=dict)
+    complete: bool = True  # False when reading stopped at the NDEF terminator; unread bytes are zero-filled
 
     @property
     def cc(self):
@@ -119,6 +120,31 @@ def leading_controls(memory):
         else:
             break
     return end
+
+
+def known_end(memory):
+    """True once the TLVs read so far reach a terminator, so the rest of the area need not be read."""
+    i = 0
+    while i < len(memory):
+        tag = memory[i]
+        i += 1
+        if tag == 0:
+            continue
+        if tag == 0xFE:
+            return True
+        if i >= len(memory):
+            return False
+        length = memory[i]
+        i += 1
+        if length == 255:
+            if i+2 > len(memory):
+                return False
+            length = int.from_bytes(memory[i:i+2], 'big')
+            i += 2
+        if i+length > len(memory):
+            return False
+        i += length
+    return False
 
 
 def blank(memory):
@@ -181,7 +207,7 @@ class Type2NDEF:
         self.capacity = max(0, max(min(254, available-2), available-4))
 
     def replacing(self, records):
-        """Return (final image, staging image, header length) for the data area.
+        """Return (final image, staging image, header length, used bytes) for the data area.
 
         The staging image carries the new message behind an NDEF TLV of length 0, so an interrupted
         write leaves a valid empty tag; writing the final header is the commit.
@@ -199,7 +225,7 @@ class Type2NDEF:
                 data += b'\xfe'
             return data.ljust(len(self.memory), b'\0')
         staged = (self.prefix + b'\3\0').ljust(len(header), b'\0')
-        return image(header), image(staged), len(header)
+        return image(header), image(staged), len(header), min(len(self.memory), len(header)+len(body)+1)
 
 
 class Type2Client:
@@ -214,7 +240,8 @@ class Type2Client:
         require(len(data) == 16, 'Incomplete tag response.')
         return data
 
-    async def read(self, tag=None):
+    async def read(self, tag=None, full=False):
+        """Read the tag. Unless full, stop at the NDEF terminator instead of reading the whole data area."""
         backend = self.backend
         require(hasattr(backend, 'read_pages') and hasattr(backend, 'write_page'),
                 'NTAG tags need a PC/SC reader such as the ACR122U or ACR1552U; the Chameleon cannot encode them here.')
@@ -238,6 +265,9 @@ class Type2Client:
         for page in range(4, spec.end, 4):
             await asyncio.sleep(0)
             memory += await self.pages(page)
+            if not full and known_end(memory[:spec.area]):
+                break
+        complete = len(memory) >= spec.area
         try:
             tail = await self.pages(spec.dynamic_lock)
         except NoCard:
@@ -245,18 +275,22 @@ class Type2Client:
         except CardError as exc:
             raise CardError(f'The {spec.name} configuration could not be read ({exc}). The tag is password protected or is not an {spec.name}.') from exc
         await self.same_card(card)
-        return Type2Snapshot(card, spec, verified, head, memory[:spec.area], tail)
+        return Type2Snapshot(card, spec, verified, head, memory[:spec.area].ljust(spec.area, b'\0'), tail, complete=complete)
 
     async def put(self, card, spec, pages):
-        for page, data in sorted(pages.items()):
+        """Write pages in order. Identity is checked once per batch (and again after the last batch), not per page."""
+        for page, data in pages.items():
             require(len(data) == 4 and (page == 3 or 4 <= page < spec.end),
                     'Only the capability container and NDEF data pages are ever written.')
+        await self.same_card(card)
+        for page, data in sorted(pages.items()):
             await asyncio.sleep(0)
-            await self.same_card(card)
             await self.backend.write_page(page, bytes(data))
 
     async def format_ndef(self, snapshot, erase_data=False):
         """Make a tag NFC-ready: capability container, then an empty NDEF message. Verified by reading back."""
+        if not snapshot.complete:
+            snapshot = await self.read(snapshot.spec.name, full=True)  # the blank check needs the whole area
         spec, card, cc = snapshot.spec, snapshot.card, snapshot.cc
         target = bytes([0xE1, 0x10, spec.cc_size, 0])
         require(cc == target or not snapshot.head[10] & 8, 'The capability container is locked with a different value, so this tag cannot be formatted.')
@@ -287,7 +321,7 @@ class Type2Client:
     async def write_records(self, snapshot, area, records):
         spec, card = snapshot.spec, snapshot.card
         require(area.writable, area.problem)
-        final, staging, header = area.replacing(records)
+        final, staging, header, used = area.replacing(records)
         current, count = area.memory, spec.area//4
         def page(image, i):
             return image[i*4:i*4+4]
@@ -296,13 +330,20 @@ class Type2Client:
         stage_two = {4+i: page(staging, i) for i in range(count) if i not in head and page(staging, i) != page(current, i)}
         commit = {4+i: page(final, i) for i in head if page(final, i) != page(staging, i)}
         try:
-            await self.same_card(card)
             await self.put(card, spec, stage_one)
             await self.put(card, spec, stage_two)
             await self.put(card, spec, commit)
-            result = await self.read(spec.name)
-            require(result.card == card and result.cc == snapshot.cc and Type2NDEF(result).records == records,
-                    'Final record verification failed.')
+            # Read back only what was written (message, terminator and any cleared pages), not the whole area.
+            upto = max([used]+[(p-3)*4 for p in (*stage_one, *stage_two, *commit)])
+            memory = b''
+            for page in range(4, 4+(upto+3)//4, 4):
+                await asyncio.sleep(0)
+                memory += await self.pages(page)
+            memory = memory[:upto]
+            require(memory == final[:upto], 'Final record verification failed.')
+            await self.same_card(card)
+            result = Type2Snapshot(card, spec, snapshot.verified, snapshot.head, memory.ljust(spec.area, b'\0'), snapshot.tail, complete=False)
+            require(Type2NDEF(result).records == records, 'Final record verification failed.')
             return result
         except Exception as exc:
             raise CardError(f'Record write not verified; the NFC message may be empty or incomplete. Present the tag and read it again. {exc}') from exc
