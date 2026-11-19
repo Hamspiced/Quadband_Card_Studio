@@ -127,3 +127,20 @@ def test_bulk_encode_tab_requires_record_and_tracks_results(window):
     assert window.bulk_prompt.text() == 'Done — remove tag AA'
     window.clear_session()
     assert window.bulk_totals.text() == '0 written · 0 failed' and not window.bulk_log.toPlainText()
+
+
+def test_tag_type_dropdowns_offer_ntags_and_check_capacity(window):
+    expected = ['MIFARE Classic 1K', 'NTAG213', 'NTAG215', 'NTAG216']
+    for box in (window.write_tag_type, window.bulk_tag_type):
+        assert [box.itemData(i) for i in range(box.count())] == expected
+    window.hf_readers.addItem('Test reader')
+    window.bulk_records = [ndef.Record.text('x'*300)]
+    window.bulk_tag_type.setCurrentIndex(1)
+    assert 'too large for NTAG213' in window.bulk_summary.text()
+    window.start_bulk()
+    assert 'NTAG213 holds' in window.status.text() and not window.busy
+    window.bulk_tag_type.setCurrentIndex(3)
+    assert 'too large' not in window.bulk_summary.text()
+    window.records = [ndef.Record.text('hello')]
+    window.write_tag_type.setCurrentIndex(2)
+    assert 'of 492 bytes (NTAG215)' in window.record_size.text()

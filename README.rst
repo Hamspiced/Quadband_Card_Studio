@@ -104,6 +104,9 @@ Supported cards and tags
    * - MIFARE Classic 1K
      - NDEF records, 47 ordinary data blocks, local credential profiles and batch data copying
      - NDEF writes require an already NFC-formatted card. Manufacturer block, keys and sector trailers remain unchanged.
+   * - NTAG213 / NTAG215 / NTAG216
+     - NDEF record encoding (single and bulk) through ACS PC/SC readers; tag-type dropdown; automatic NFC formatting (capability container and empty NDEF message) of unformatted tags; read-back verification
+     - Password-protected, locked or read-only tags are refused. UID, lock bytes and configuration are never written. Chameleon Ultra cannot encode NTAGs. Physical NTAG writes are unverified.
    * - Gen1a Magic Classic 1K
      - Normal authenticated Classic 1K data access
      - No backdoor/UID-changing commands; not a full UID/key clone.
@@ -117,7 +120,7 @@ Supported cards and tags
      - Scan and save supported identities when reader firmware provides the format
      - Read/save only in this password-free implementation.
 
-Classic 4K, DESFire and NTAG memory editing are not implemented. Some other
+Classic 4K, DESFire and NTAG data-block editing are not implemented. Some other
 HF cards can be identified without enabling unsupported memory operations.
 
 M5Stack / YRM100 adapter setup

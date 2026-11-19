@@ -40,7 +40,7 @@ Choose the serial device explicitly. Piswords usually uses 9600 baud, address 0;
 
 JRD-4035/YRM100: choose the matching Reader profile, use a USB-TTL adapter and select its port. Profiles default to 115200 baud, 8N1; older M100 firmware may need 9600. Match the module's UART logic voltage, cross TX/RX, share ground and provide suitable RF-module power. These profiles have no address byte or documented buzzer command. They support 16-bit word addresses, 64-word reads, 32-word writes and exact PC-plus-EPC memory selection for EPCs up to 28 bytes. Power controls are conservatively limited to 18–26 dBm; region/channel settings remain unchanged. Module tag reports include signed RSSI but not frequency. See the main README for wiring and limitations. Physical module operation remains unverified.
 
-HF record writes require an already NFC-formatted **MIFARE Classic 1K**. This release does not format factory-blank cards or edit UID, keys or trailers. Other HF cards can be identified, not edited. A `.qcard` is a data-only 47-block profile, not a full credential/UID/key clone. A data copy does not configure NDEF sector keys. `.qcard` and `.qlf` use the same schemas as the Mac app.
+Single-tag HF record writes (**HF Workspace → Write records**) take a **Tag type** from a dropdown: MIFARE Classic 1K (needs an already NFC-formatted card) or NTAG213 / NTAG215 / NTAG216 (see below). UID, keys and Classic sector trailers are never edited. Other HF cards can be identified, not edited. A `.qcard` is a data-only 47-block profile, not a full credential/UID/key clone. A data copy does not configure NDEF sector keys. `.qcard` and `.qlf` use the same schemas as the Mac app.
 
 Copy to infinity accepts a scan or a file, waits for source removal, and lists successes/failures while continuing after card failures. A held card is not retried. Loss of the reader requires another observed removal after reconnection. Stop lets the current card finish. Other operations remain disabled while hardware work is in progress.
 
@@ -75,7 +75,20 @@ python -m pytest desktop/tests
 python -m ruff check desktop/src desktop/tests
 ```
 
-## Bulk encode (HF Workspace, MIFARE Classic 1K, PC/SC readers)
+## NTAG213 / NTAG215 / NTAG216 (PC/SC readers)
+
+Pick the NTAG type in the **Tag type** dropdown on **Write records** or **Bulk encode**. Records are written as an NFC Forum Type 2 NDEF message:
+
+- The tag is identified with GET_VERSION and must match the selected type; a mismatch (for example an NTAG216 with NTAG215 selected) is refused before anything is written. If the reader will not pass GET_VERSION through, the selected type is trusted and the capability container is cross-checked instead.
+- A tag that is not NFC-formatted gets the capability container (`E1 10`, data area size 144 / 496 / 872 bytes for 213 / 215 / 216, as recommended by NXP) and an empty NDEF message TLV. Factory NTAGs already carry both, so they are only written. The capability container is one-time programmable: it can only gain bits, so a tag already set to a larger size is refused. Formatting refuses tags that hold other data unless **Overwrite tags that already hold other data when formatting** is ticked.
+- The NDEF message is stored in an NDEF Message TLV (one-byte length, or `FF` plus two bytes for 255+ byte messages) followed by a terminator TLV. NTAG213's factory Lock Control TLV is preserved, which is why its capacity is 137 bytes. Capacities: NTAG213 137, NTAG215 492, NTAG216 868 bytes of NDEF message; the dialogs show the size before writing.
+- Writes are staged: the message length is set to 0 first, the body is written, then the real length is written last, so an interrupted write leaves a valid empty tag. The tag is read back and the records compared before it counts.
+- Tags with static or dynamic lock bits on the data area, a password (AUTH0) covering it, or a read-only capability container are refused. Pages 0–2 (UID and permanent lock bytes), the dynamic lock bytes and the configuration/password pages are never written.
+- The Chameleon cannot encode NTAGs; use an ACR122U / ACR1552U.
+
+All 19 record types encode to standard NDEF (well-known Text and URI records, MIME records for vCard, Wi-Fi, Bluetooth and data, and the Android application external type). Records larger than the selected tag are rejected with the size needed.
+
+## Bulk encode (HF Workspace, MIFARE Classic 1K and NTAG, PC/SC readers)
 
 **HF Workspace → Bulk encode** writes the same record to tag after tag. Choose the tag type and a record, press **Start bulk encoding**, then follow the large prompt: *Present a tag → Writing → Done, remove the tag*. Press **Stop** to finish.
 

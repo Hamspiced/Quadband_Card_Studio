@@ -14,6 +14,7 @@ class NotFormatted(CardError):
     """The card is readable but has no NFC Forum directory."""
 
 
+CLASSIC_1K = 'MIFARE Classic 1K'
 DATA_BLOCKS = tuple(b for b in range(64) if data_block(b))
 FACTORY = (b'\xff'*6, 0x60)
 
@@ -341,7 +342,7 @@ async def copy_forever(client_factory, profile, supplied, stop, progress, result
         await asyncio.sleep(interval)
 
 
-async def encode_forever(client_factory, records, supplied, stop, phase, result, interval=.3, erase_data=False, settle=.15):
+async def encode_forever(client_factory, records, supplied, stop, phase, result, interval=.3, erase_data=False, settle=.15, tag=CLASSIC_1K):
     """Encode the same records onto one tag after another until stopped.
 
     phase(state, text) drives the on-screen prompt; result(success, detail) feeds the tally.
@@ -349,8 +350,10 @@ async def encode_forever(client_factory, records, supplied, stop, phase, result,
     changes (moved, swapped, or a second tag entering the field) is never written, and a UID already
     encoded this session is skipped rather than rewritten. Reader trouble and unreadable tags (for
     example several tags on the antenna) are reported without being counted as tag failures.
+    tag selects the tag type: MIFARE Classic 1K or NTAG213/215/216 (PC/SC readers only).
     """
-    ndef.encode(records)
+    from . import type2
+    type2.check_fit(tag, records)
     armed, done, hold, shown = True, set(), ('wait', 'Remove the tag'), None
 
     def show(state, text):
@@ -381,7 +384,10 @@ async def encode_forever(client_factory, records, supplied, stop, phase, result,
                     else:
                         show('writing', f'Writing {uid}… keep the tag still')
                         try:
-                            _, formatted, written = await client.encode_tag(records, supplied, erase_data)
+                            if tag == CLASSIC_1K:
+                                _, formatted, written = await client.encode_tag(records, supplied, erase_data)
+                            else:
+                                _, formatted, written = await type2.Type2Client(backend).encode_tag(tag, records, erase_data)
                             require(await backend.identify() == card, 'The tag changed while writing.')
                         except Exception as exc:
                             result(False, f'{uid} · {exc}')
