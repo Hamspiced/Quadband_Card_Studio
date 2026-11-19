@@ -252,6 +252,9 @@ class Connection(QWidget):
         self.window.run(lambda: self.window.service.disconnect(self.family), disconnected, 'Disconnecting…')
 
 
+MAX_BULK_RECORDS = 3
+
+
 class RecordDialog(QDialog):
     def __init__(self, parent):
         super().__init__(parent)
@@ -491,16 +494,21 @@ class MainWindow(QMainWindow):
         bulk = QWidget()
         bl = QVBoxLayout(bulk)
         self.bulk_tag_type = combo(type2.tag_types())
-        self.bulk_summary = text_label('No record chosen yet.')
+        self.bulk_summary = text_label('No records chosen yet.')
+        self.bulk_list = QListWidget()
+        self.bulk_list.setMaximumHeight(96)
         bl.addWidget(group('What to write', row(text_label('Tag type'), self.bulk_tag_type),
-                           row(button('Choose record…', self.choose_bulk_record), self.bulk_summary)))
+                           self.bulk_list,
+                           row(button('Add record…', self.add_bulk_record), button('Remove', self.remove_bulk_record),
+                               button('Move up', lambda: self.move_bulk_record(-1)), button('Move down', lambda: self.move_bulk_record(1))),
+                           self.bulk_summary))
         self.bulk_erase = QCheckBox('Overwrite tags that already hold other data when formatting')
         bl.addWidget(self.bulk_erase)
-        self.bulk_prompt = QLabel('Choose a record, then start.')
+        self.bulk_prompt = QLabel('Add up to 3 records, then start.')
         self.bulk_prompt.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.bulk_prompt.setWordWrap(True)
         self.bulk_prompt.setMinimumHeight(120)
-        self.bulk_phase('idle', 'Choose a record, then start.')
+        self.bulk_phase('idle', 'Add up to 3 records, then start.')
         bl.addWidget(self.bulk_prompt)
         bl.addWidget(button('Start bulk encoding', self.start_bulk, True))
         self.bulk_totals = text_label('0 written · 0 failed')
@@ -706,31 +714,52 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self.failed(str(exc))
 
-    def choose_bulk_record(self):
+    def add_bulk_record(self):
+        if len(self.bulk_records) >= MAX_BULK_RECORDS:
+            self.failed(f'Bulk encoding takes up to {MAX_BULK_RECORDS} records. Remove one to add another.')
+            return
         dialog = RecordDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.bulk_records = [dialog.record]
-            title, value = dialog.record.display()
+            self.bulk_records.append(dialog.record)
             self.bulk_describe()
             self.bulk_phase('idle', 'Ready. Press Start bulk encoding.')
 
+    def remove_bulk_record(self):
+        i = self.bulk_list.currentRow()
+        if 0 <= i < len(self.bulk_records):
+            self.bulk_records.pop(i)
+            self.bulk_describe()
+
+    def move_bulk_record(self, direction):
+        i, records = self.bulk_list.currentRow(), self.bulk_records
+        if 0 <= i < len(records) and 0 <= i+direction < len(records):
+            records[i], records[i+direction] = records[i+direction], records[i]
+            self.bulk_describe()
+            self.bulk_list.setCurrentRow(i+direction)
+
     def bulk_describe(self):
+        self.bulk_list.clear()
+        for record in self.bulk_records:
+            title, value = record.display()
+            self.bulk_list.addItem(title+' · '+value.replace(chr(10), ' ')[:160])
         if not self.bulk_records:
+            self.bulk_summary.setText('No records chosen yet.')
             return
-        title, value = self.bulk_records[0].display()
         tag = self.bulk_tag_type.currentData()
-        size = len(ndef.encode(self.bulk_records))
-        fit = '' if size <= type2.capacity(tag) else f' · too large for {tag} ({type2.capacity(tag)} bytes)'
-        self.bulk_summary.setText(f'{title} · {value.replace(chr(10), " ")[:120]} · {size} bytes{fit}')
+        size, room = len(ndef.encode(self.bulk_records)), type2.capacity(tag)
+        text = f'{len(self.bulk_records)} of {MAX_BULK_RECORDS} records · {size} of {room} bytes ({tag})'
+        if size > room:
+            text += f' · too large for {tag}: {size-room} bytes over. Remove or shorten a record, or choose a larger tag'
+        self.bulk_summary.setText(text)
 
     def start_bulk(self):
         try:
-            require(bool(self.bulk_records), 'Choose the record to write first.')
+            require(bool(self.bulk_records), 'Add at least one record to write first.')
             require(bool(self.hf_readers.currentText()), 'Select an HF reader first.')
             records, name, key, erase = list(self.bulk_records), self.hf_readers.currentText(), self.key(), self.bulk_erase.isChecked()
             tag = self.bulk_tag_type.currentData()
-            type2.check_fit(tag, records)
-            if not self.review('Bulk encode', f'Write {self.bulk_summary.text()} to every {tag} you present?\n'
+            size = type2.check_fit(tag, records)
+            if not self.review('Bulk encode', f'Write {len(records)} record(s), {size} bytes, to every {tag} you present?\n'
                                'Tags that are not NFC-formatted are formatted first'+(' (existing data will be overwritten).' if erase else '.')+'\n'
                                'Each tag is verified before the next one is accepted. Press Stop to finish.'):
                 return
@@ -1192,8 +1221,8 @@ class MainWindow(QMainWindow):
         self.bulk_success = self.bulk_failure = 0
         self.bulk_records = []
         self.bulk_totals.setText('0 written · 0 failed')
-        self.bulk_summary.setText('No record chosen yet.')
-        self.bulk_phase('idle', 'Choose a record, then start.')
+        self.bulk_describe()
+        self.bulk_phase('idle', 'Add up to 3 records, then start.')
         self.profile_label.setText('Scan card or upload card credentials to choose a source.')
         self.update_records()
         self.note('Session cleared.')

@@ -56,7 +56,7 @@ CLASSIC_CAPACITY = 716
 
 def tag_types():
     """Dropdown entries: label -> tag type."""
-    return {CLASSIC_1K: CLASSIC_1K, **{s.label: s.name for s in TAGS.values()}}
+    return {f'{CLASSIC_1K} · {CLASSIC_CAPACITY} bytes': CLASSIC_1K, **{s.label: s.name for s in TAGS.values()}}
 
 
 def capacity(tag):

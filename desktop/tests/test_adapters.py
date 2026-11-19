@@ -63,6 +63,18 @@ async def test_pcsc_no_card_is_presence_false(connection):
     assert 'lock' not in connection.calls
 
 
+@pytest.mark.parametrize('hresult', [0x80100066, 0x80100067, 0x80100069])
+async def test_pcsc_tag_leaving_the_field_is_no_card_not_an_error(connection, hresult):
+    from smartcard.Exceptions import CardConnectionException
+    def leaving(*args, **kwargs):
+        raise CardConnectionException('Unable to connect with protocol: T0 or T1.', hresult=hresult-(1 << 32))
+    connection.connect = leaving
+    backend = pcsc.PCSC('test')
+    assert not await backend.present()
+    with pytest.raises(NoCard):
+        await backend.identify()
+
+
 async def test_ble_chameleon_pairs_then_protected_read_then_notifications(monkeypatch):
     import bleak
     calls = []
