@@ -66,6 +66,15 @@ class PagesWorkflowTests(unittest.TestCase):
         self.assertIn("desktop/dist/*.zip", windows)
         self.assertIn("dist/Quadband-Card-Studio-*-macOS-universal.zip", text)
 
+    def test_firmware_container_trusts_only_the_checked_out_workspace(self):
+        text = (ROOT/".github/workflows/build.yml").read_text()
+        firmware = text.split("\n  cores3-firmware:\n",1)[1].split("\n  portable:\n",1)[0]
+        command = 'git config --global --add safe.directory "$GITHUB_WORKSPACE"'
+        self.assertIn(command,firmware)
+        self.assertLess(firmware.index(command),firmware.index("name: Read release metadata"))
+        self.assertNotIn("safe.directory '*'",firmware)
+        self.assertNotIn('safe.directory "*"',firmware)
+
 
 if __name__ == "__main__":
     unittest.main()

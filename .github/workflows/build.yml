@@ -89,6 +89,8 @@ jobs:
           ref: ${{ inputs.build-ref || github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Trust only the checked-out repository in the build container
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Read release metadata
         id: metadata
         env:

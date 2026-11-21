@@ -105,6 +105,10 @@ class VersionTests(unittest.TestCase):
 
 
 class PackagingTests(unittest.TestCase):
+    def test_mac_architecture_verification_puts_the_binary_before_arch_names(self):
+        source = (ROOT/'scripts/build-app.sh').read_text()
+        self.assertIn('lipo "$APP/Contents/MacOS/MagStripeStudio" -verify_arch "$ARCH"', source)
+
     def test_local_windows_cross_packager_uses_checked_out_version(self):
         source = (ROOT/'desktop/packaging/build-windows-local.py').read_text()
         self.assertIn("return module.application_version(ROOT)", source)

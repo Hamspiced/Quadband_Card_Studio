@@ -29,7 +29,7 @@ codesign --force --sign - "$APP"
 codesign --verify --deep --strict "$APP"
 test "$(lipo -archs "$APP/Contents/MacOS/MagStripeStudio" | wc -w | xargs)" = 2
 for ARCH in arm64 x86_64; do
-  lipo -verify_arch "$ARCH" "$APP/Contents/MacOS/MagStripeStudio"
+  lipo "$APP/Contents/MacOS/MagStripeStudio" -verify_arch "$ARCH"
 done
 ditto -c -k --keepParent "$APP" "$PWD/dist/Quadband-Card-Studio-$VERSION-macOS-universal.zip"
 printf 'Built %s\n' "$APP"
