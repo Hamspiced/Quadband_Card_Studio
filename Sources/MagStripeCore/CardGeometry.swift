@@ -42,7 +42,10 @@ public enum ClassicAccess {
                   c2 ^ ((trailer[6] >> (4 + group)) & 1) == 1,
                   c3 ^ ((trailer[7] >> group) & 1) == 1 else { throw StripeError("Inconsistent Classic access bits. Writing is disabled.") }
         }
-        let access = Int(((trailer[7] >> (4 + index)) & 1) * 4 + ((trailer[8] >> index) & 1) * 2 + ((trailer[8] >> (4 + index)) & 1))
+        let c1 = Int((trailer[7] >> (4 + index)) & 1)
+        let c2 = Int((trailer[8] >> index) & 1)
+        let c3 = Int((trailer[8] >> (4 + index)) & 1)
+        let access = c1 * 4 + c2 * 2 + c3
         return access == 0 || ([3,4,6].contains(access) && key == .b)
     }
 }

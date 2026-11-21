@@ -4,7 +4,7 @@ Quadband Card Studio by Midwest Gadgets
 One local workbench for magnetic-stripe, HF/NFC, UHF and LF cards.
 Native SwiftUI on macOS, with a Python/Qt desktop application for Windows and Linux.
 
-**Release: v1.1.0** · Application version **1.1.0** · **GPL-3.0-only**
+**Release: v1.1.1** · Application version **1.1.1** · **GPL-3.0-only**
 
 `Download the latest release <https://github.com/Hamspiced/Quadband_Card_Studio/releases/latest>`_
 · `Detailed user guide <docs/USER-GUIDE.txt>`_
@@ -14,7 +14,7 @@ Native SwiftUI on macOS, with a Python/Qt desktop application for Windows and Li
 
 This release integrates the CoreS3 reader hub, expanded Classic 4K/NTAG
 workflows and reviewed bulk NDEF encoding across the desktop and devices.
-Component versions are desktop 1.1.0, CardputerZero 0.3.0 and CoreS3 0.4.0.
+Component versions are desktop 1.1.1, CardputerZero 0.3.0 and CoreS3 0.4.0.
 Device/reader hardware acceptance is still required; software validation
 and package availability are not claims of physical write compatibility.
 See `CoreS3 setup <docs/CORES3.rst>`_ and the
@@ -206,7 +206,7 @@ Features
 Download and run
 ----------------
 
-**macOS:** download ``Quadband-Card-Studio-1.1.0-macOS-universal.zip`` from the
+**macOS:** download ``Quadband-Card-Studio-1.1.1-macOS-universal.zip`` from the
 `release page <https://github.com/Hamspiced/Quadband_Card_Studio/releases/latest>`_,
 extract it and move the app into Applications. The universal app targets Apple
 silicon and Intel Macs on macOS 13 or later. It is ad-hoc signed, not Developer

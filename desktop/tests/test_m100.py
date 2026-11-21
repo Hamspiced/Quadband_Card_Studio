@@ -27,7 +27,8 @@ def test_vendor_packets_and_every_fragment_boundary():
 
 @pytest.mark.parametrize('packet', [
     b'\xA0', bytes.fromhex('BB00220000'), bytes.fromhex('BB01220401'),
-    bytes.fromhex('BB01280001002B7E'), bytes.fromhex('BB01280001002A00'), bytes(65537)])
+    bytes.fromhex('BB01280001002B7E'), bytes.fromhex('BB01280001002A00'), bytes(65537)],
+    ids=['bad-start', 'short-header', 'oversized-length', 'checksum', 'terminator', 'buffer-overflow'])
 def test_malformed_frames_fail_closed(packet):
     with pytest.raises(CardError):
         m100.Decoder().feed(packet)

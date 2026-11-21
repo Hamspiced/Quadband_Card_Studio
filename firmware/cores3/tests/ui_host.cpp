@@ -68,7 +68,8 @@ public:
         for (const auto& d : draws) {
             out << "<defs><clipPath id=\"c" << i << "\"><rect x=\"" << d.clip.x
                 << "\" y=\"" << d.clip.y << "\" width=\"" << d.clip.w << "\" height=\"" << d.clip.h
-                << "\"/></clipPath></defs><g clip-path=\"url(#c" << i++ << ")\">";
+                << "\"/></clipPath></defs><g clip-path=\"url(#c" << i << ")\">";
+            ++i;
             std::ostringstream rgb;
             rgb << '#' << std::hex << std::setw(6) << std::setfill('0') << d.color;
             if (!d.scale)

@@ -93,7 +93,8 @@ struct FakeRadio : Radio {
         return OK;
     }
     Status write(unsigned block, const Bytes& in) override {
-        if (before_write) before_write(); ++writes;
+        if (before_write) before_write();
+        ++writes;
         written.push_back(block);
         if (!bad_verify) {
             if (ntag_memory) std::copy(in.begin(),in.end(),pages[block].begin());
