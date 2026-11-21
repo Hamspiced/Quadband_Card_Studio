@@ -26,10 +26,10 @@ struct NFCToolkitView: View {
                             Button("Stop batch") { model.stopBatch() }.buttonStyle(.borderedProminent)
                         } else {
                             Button("Start copying") { model.startBatch() }.buttonStyle(.borderedProminent)
-                                .disabled(model.busy || model.profile == nil || model.selectedReader.isEmpty)
+                                .disabled(model.busy || model.profile == nil || model.selectedReader.isEmpty || model.profile.map { !model.writableFamily(model.selectedReader,$0.cardFamily) } == true)
                         }
                     }
-                    Text("Remove the source card, then present targets one at a time. Each copy verifies all 47 data blocks. Failures are recorded and the batch continues after you remove that card.")
+                    Text("Remove the source card, then present targets one at a time. Each copy requires a matching family and preflights all eligible data units before writing. Failures are recorded and the batch continues after you remove that card.")
                         .font(.system(size: 11)).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
                 }.padding(16).background(accent.opacity(0.05)).cornerRadius(9)
             }
@@ -37,13 +37,13 @@ struct NFCToolkitView: View {
                 HStack(alignment: .center) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(model.profileOrigin).font(.system(size: 13, weight: .semibold))
-                        Text("\(profile.blocks.count) data blocks · 752 bytes · UID and keys preserved")
+                        Text("\(profile.cardFamily.rawValue) · \(profile.blocks.count) units · \(profile.blocks.count * profile.cardFamily.unitSize) bytes · protected metadata preserved")
                             .font(.system(size: 11)).foregroundColor(.secondary)
                     }
                     Spacer()
                     if !model.batchPresented {
                         Button("Write profile & verify") { model.writeProfileOnce() }.buttonStyle(.borderedProminent)
-                            .disabled(model.busy || model.selectedReader.isEmpty)
+                            .disabled(model.busy || model.selectedReader.isEmpty || !model.writableFamily(model.selectedReader,profile.cardFamily))
                     }
                 }
             } else if !model.batchPresented {

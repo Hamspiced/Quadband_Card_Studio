@@ -21,3 +21,15 @@ __pycache__/
 Resources/acr1552u_rf_config.py
 # Generated Windows icon (original PNG is included).
 desktop/packaging/Quadband.ico
+managed_components/
+.pio/
+firmware/cores3/sdkconfig
+firmware/cores3/sdkconfig.old
+# Browser dependencies, previews and captured test output are generated locally.
+node_modules/
+playwright-report/
+test-results/
+.cache/
+.test-payload/
+.env
+.env.*

@@ -18,6 +18,12 @@ private func checkPCSC(_ result: Int32) throws {
     throw StripeError("\(message) (PC/SC \(String(format: "%08X", UInt32(bitPattern: result))))")
 }
 
+extension NFCServicing {
+    func formatNDEF(reader: String, expected: ClassicSnapshot, overwrite: Bool) async throws -> ClassicSnapshot {
+        throw StripeError("This reader does not implement canonical NDEF formatting.")
+    }
+}
+
 private final class PCSCContext {
     var handle: Int32 = 0
     init() throws { try checkPCSC(QBCreateContext(&handle)) }
@@ -36,12 +42,13 @@ private final class PCSCContext {
 
 private final class PCSCCard: NFCTransport {
     let context: PCSCContext
+    let readerName: String
     var handle: Int32 = 0
     var activeProtocol: UInt32 = 0
     var atr: [UInt8] = []
     private var transaction = false
     init(context: PCSCContext, reader: String) throws {
-        self.context = context
+        self.context = context; readerName = reader
         try checkPCSC(QBConnect(context.handle, reader, &handle, &activeProtocol))
         do {
             try checkPCSC(QBBegin(handle)); transaction = true
@@ -74,6 +81,7 @@ private final class PCSCCard: NFCTransport {
 
 // Blocking PC/SC calls run on this actor's executor, never the UI's main actor.
 protocol NFCServicing: Sendable {
+    func formatNDEF(reader: String, expected: ClassicSnapshot, overwrite: Bool) async throws -> ClassicSnapshot
     func readers() async throws -> [String]
     func identify(reader: String) async throws -> NFCCardInfo
     func read(reader: String, key: [UInt8], type: ClassicKeyType, sector: Int?) async throws -> ClassicSnapshot
@@ -85,6 +93,10 @@ protocol NFCServicing: Sendable {
 }
 
 actor NFCService: NFCServicing {
+    func formatNDEF(reader: String, expected: ClassicSnapshot, overwrite: Bool) throws -> ClassicSnapshot {
+        let card = try PCSCCard(context: PCSCContext(),reader:reader)
+        return try ClassicClient(transport:card).formatNDEF(expected:expected,overwrite:overwrite)
+    }
     func readAutomatic(reader: String, key: [UInt8], type: ClassicKeyType, sector: Int?) throws -> ClassicSnapshot {
         let card = try PCSCCard(context: PCSCContext(), reader: reader)
         return try ClassicClient(transport: card).readAutomatic(key: key, type: type, sector: sector)

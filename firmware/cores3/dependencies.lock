@@ -1,0 +1,40 @@
+{
+  "format": 1,
+  "idf": "5.5.3",
+  "idfRevision": "2c211b236707889e8400c4dc5644dd5c4ee071e0",
+  "sourceBase": "c2a0afa",
+  "dependencies": {
+    "M5GFX": {
+      "url": "https://github.com/m5stack/M5GFX.git",
+      "revision": "7cb26b44ab31bb41a0a597196dd2c6d868869a21"
+    },
+    "M5HAL": {
+      "url": "https://github.com/m5stack/M5HAL.git",
+      "revision": "e3a84320f21bb48062f8101301020e946182a71d"
+    },
+    "M5Unified": {
+      "url": "https://github.com/m5stack/M5Unified.git",
+      "revision": "44952cb8e4ac88bf04ad23b9dfd6f4b05c788348"
+    },
+    "M5Unit-NFC": {
+      "url": "https://github.com/m5stack/M5Unit-NFC.git",
+      "revision": "471a6e02e8052264d39b3ac97005ce4de9d1cb91"
+    },
+    "M5Unit-RFID": {
+      "url": "https://github.com/m5stack/M5Unit-RFID.git",
+      "revision": "4b98e658181d6f0a7c3dc2199302ccc510970193"
+    },
+    "M5UnitUnified": {
+      "url": "https://github.com/m5stack/M5UnitUnified.git",
+      "revision": "68a8fa74959a3c18ffae5ce7f73ac61ecf651d4c"
+    },
+    "M5Utility": {
+      "url": "https://github.com/m5stack/M5Utility.git",
+      "revision": "336195d0f9466332552b337b94cab72f83c8d2ca"
+    },
+    "esp-usb": {
+      "url": "https://github.com/espressif/esp-usb.git",
+      "revision": "7bf402fe68aa310d4489cc65fe801c5fbcc0454b"
+    }
+  }
+}

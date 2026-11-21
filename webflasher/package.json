@@ -1,0 +1,20 @@
+{
+  "name": "quadband-cores3-installer",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build && node tools/notices.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "test:browser": "playwright test",
+    "preview": "vite preview --host 127.0.0.1 --port 4177 --strictPort"
+  },
+  "dependencies": {
+    "crypto-js": "4.2.0",
+    "esptool-js": "0.7.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1",
+    "vite": "6.4.5"
+  }
+}

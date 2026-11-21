@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <meta name="description" content="Verified, settings-preserving CoreS3 firmware installer for Quadband Card Studio.">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'">
+  <title>CoreS3 Installer · Quadband Card Studio</title>
+</head>
+<body>
+  <header><a class="brand" href="./"><span class="mark" aria-hidden="true">Q</span><span>QUADBAND <small>CARD STUDIO</small></span></a><div class="header-right"><span class="pill">CoreS3 firmware</span><button id="theme" class="quiet" aria-label="Toggle light or dark theme">Light / dark</button></div></header>
+  <main>
+    <section class="hero">
+      <div><p class="eyebrow">YOUR WORKBENCH. CONNECTED.</p><h1>A fresh start.<br><span>Not a clean slate.</span></h1><p class="lede">Install CoreS3 firmware directly from your browser. Verified split images update the essentials, leaving supported device settings and Bluetooth bonds in place.</p><div class="hero-tags"><span>ESP32-S3</span><span>16 MB</span><span>No whole-chip erase</span></div></div>
+      <div class="device" aria-label="Illustration of CoreS3"><div class="device-screen"><div class="mini-brand">QUADBAND</div><div class="frequency"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><span>CORE S3 / CONNECTED</span><div class="mini-grid"><b>LF</b><b>HF</b><b>UHF</b><b>USB</b></div></div><div class="device-label">M5STACK <strong>CoreS3</strong></div></div>
+    </section>
+    <section class="workspace">
+      <aside class="release card"><p class="eyebrow">FIRMWARE PAYLOAD</p><h2 id="release-title">Checking release…</h2><p id="release-status">Loading the matching catalog and verifying every download.</p><dl id="metadata"></dl><div class="preserve"><span class="status-dot"></span><strong>Settings-aware install</strong><p>Only bootloader, partition table and application regions are written. NVS / PHY sectors at 0x9000–0xFFFF are excluded.</p></div><details><summary>Files &amp; SHA-256 checksums</summary><div id="downloads"></div></details><p class="small">Build provenance: <a href="./BUILD-INFO.json">BUILD-INFO.json</a><br><a href="./SHA256SUMS.txt">SHA256SUMS.txt</a></p></aside>
+      <section class="installer card" aria-labelledby="installer-title"><div class="section-heading"><div><p class="eyebrow">BROWSER INSTALLER</p><h2 id="installer-title">Connect with confidence.</h2></div><span class="pill" id="state">Checking</span></div>
+        <ol class="steps"><li class="active"><span>1</span>Prepare</li><li><span>2</span>Inspect</li><li><span>3</span>Install &amp; verify</li></ol>
+        <div id="support" class="notice">Checking browser support…</div>
+        <fieldset id="confirmations"><legend>Before connecting</legend>
+          <label><input type="checkbox" id="physical"><span>I physically confirm this is an <strong>M5Stack CoreS3</strong> with 16 MB flash, not another ESP32-S3 board. Software detection cannot identify every board.</span></label>
+          <label><input type="checkbox" id="peripherals"><span>CoreS3 USB host output is <strong>OFF</strong>. The Chameleon and all reader / host peripherals are disconnected. Only the programming PC is connected by USB.</span></label>
+        </fieldset>
+        <div class="actions"><button id="connect" disabled>Select USB port &amp; inspect</button><button id="cancel" class="quiet" disabled>Cancel / disconnect</button></div>
+        <div id="inspection" class="inspection" hidden><strong>Device inspection</strong><p id="device-result"></p><label><input type="checkbox" id="approve"><span>I approve writing these verified firmware regions to the inspected CoreS3. I will keep the USB cable connected until verification finishes.</span></label><button id="install" disabled>Install verified firmware</button></div>
+        <div class="progress-block"><label for="progress">INSTALLATION STATUS</label><progress id="progress" max="100" value="0"></progress><p id="message" role="status" aria-live="polite">No USB port has been requested.</p></div>
+        <details class="log"><summary>Session log</summary><pre id="log" aria-label="Serial session log"></pre></details>
+      </section>
+    </section>
+    <section class="help-grid"><article><p class="eyebrow">SUPPORTED BROWSERS</p><h3>Desktop Chrome or Edge</h3><p>Web Serial needs HTTPS (or localhost), a data-capable USB cable and a supported desktop browser. No extensions, accounts or cloud connection to your device.</p></article><article><p class="eyebrow">IF SOMETHING STOPS</p><h3>No automatic retries.</h3><p>An interruption can leave firmware incomplete. Close other serial tools, reconnect, enter the CoreS3 download mode if needed, then inspect again. Unknown or partially written partition layouts are refused. Use the bundle's manual split-image instructions for recovery; never erase settings just to bypass this check.</p></article><article><p class="eyebrow">PREFER THE TERMINAL?</p><h3>Use the release firmware bundle.</h3><p>Download the matching full CoreS3 firmware archive from <a href="https://github.com/Hamspiced/Quadband_Card_Studio/releases">GitHub Releases</a> and follow its setup instructions. Never flash the application BIN at offset zero.</p></article></section>
+  </main>
+  <footer><span>Midwest Gadgets · RF research credits: Tototo31 / Ashsh</span><a href="./THIRD-PARTY.txt">Dependency licenses &amp; notices</a><a id="source-link" href="https://github.com/Hamspiced/Quadband_Card_Studio">Source project</a></footer>
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>

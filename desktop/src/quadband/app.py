@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QHBoxLayout, 
     QLabel, QPushButton, QComboBox, QLineEdit, QPlainTextEdit, QListWidget, QStackedWidget, QTabWidget,
     QGroupBox, QScrollArea, QSpinBox, QCheckBox, QMessageBox, QFileDialog, QDialog, QDialogButtonBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QSizePolicy)
-from . import __version__, magstripe, hf, ndef, chameleon, pcsc, reader_tools
+from . import __version__, magstripe, hf, ndef, chameleon, pcsc, reader_tools, cores3, ntag, type2, bulk
 from .common import CardError, require, hex_bytes, load_json, save_json
 from .service import Service, StopFlag, call_sync
 
@@ -24,12 +24,16 @@ class Worker(QThread):
     failed = Signal(str)
     tag = Signal(object)
     batch = Signal(bool, str)
+    ndef_batch = Signal(bool, str)
+    bridge = Signal(object)
+    review_target = Signal(object)
 
     def __init__(self):
         super().__init__()
         self.ready = threading.Event()
         self.loop = asyncio.new_event_loop()
         self.service = Service(self.progress.emit)
+        self.service.bridge_changed = self.bridge.emit
         self.future = None
 
     def run(self):
@@ -159,6 +163,8 @@ class Connection(QWidget):
         super().__init__()
         self.window, self.family = window, family
         self.mode = combo(['USB serial', 'Bluetooth'] if family == 'chameleon' else ['USB serial'] if family == 'uhf' else ['USB HID', 'USB serial', 'Bluetooth'])
+        if family in ('chameleon', 'uhf'):
+            self.mode.addItem('CoreS3')
         self.device = QComboBox()
         self.device.setMinimumWidth(0 if compact else 240)
         if compact:
@@ -193,6 +199,13 @@ class Connection(QWidget):
             layout.addWidget(fields)
         layout.addWidget(self.status)
         self.mode.currentTextChanged.connect(lambda _: self.device.clear())
+        self.mode.currentTextChanged.connect(self.mode_changed)
+
+    def mode_changed(self, mode):
+        self.baud.setEnabled(mode != 'CoreS3')
+        if self.family == 'uhf' and mode == 'CoreS3':
+            self.reader_profile.setCurrentText('M5Stack JRD-4035')
+            self.profile_changed('M5Stack JRD-4035')
     def profile_changed(self, profile):
         module = profile != 'Piswords UHF2'
         self.address.setEnabled(not module)
@@ -248,6 +261,43 @@ class Connection(QWidget):
                 self.baud.setEnabled(True)
                 self.address.setEnabled(self.reader_profile.currentText() == 'Piswords UHF2')
         self.window.run(lambda: self.window.service.disconnect(self.family), disconnected, 'Disconnecting…')
+
+
+class CoreS3Connection(QWidget):
+    def __init__(self, window):
+        super().__init__()
+        self.window = window
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.devices = QComboBox()
+        self.devices.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.devices.setMinimumContentsLength(10)
+        self.devices.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.status = text_label('Disconnected · open pairing locally on CoreS3')
+        self.slots = text_label('Port A HF · Port C UHF · USB Chameleon')
+        layout.addWidget(self.devices)
+        layout.addWidget(button('Scan CoreS3', self.scan))
+        layout.addWidget(row(button('Connect', self.connect, True),
+                             button('Disconnect', self.disconnect)))
+        layout.addWidget(self.status)
+        layout.addWidget(self.slots)
+
+    def scan(self):
+        def found(devices):
+            self.devices.clear()
+            for value, title in devices:
+                self.devices.addItem(title, value)
+        self.window.run(cores3.discover, found, 'Finding CoreS3 bridges…')
+
+    def connect(self):
+        device = self.devices.currentData()
+        async def job():
+            require(device is not None, 'Scan and select CoreS3 first.')
+            return await self.window.service.connect_bridge(device)
+        self.window.run(job, self.status.setText, 'Pairing CoreS3; confirm passkey on both devices…')
+
+    def disconnect(self):
+        self.window.run(self.window.service.disconnect_bridge, self.status.setText)
 
 
 class RecordDialog(QDialog):
@@ -309,12 +359,17 @@ class MainWindow(QMainWindow):
         self.worker.failed.connect(self.failed)
         self.worker.tag.connect(self.tag_received)
         self.worker.batch.connect(self.batch_result)
+        self.worker.ndef_batch.connect(self.ndef_batch_result)
+        self.worker.bridge.connect(self.bridge_changed)
+        self.worker.review_target.connect(self.review_ndef_target)
         self.worker.start()
         self.worker.ready.wait(2)
         self.busy, self.stop_flag, self.callback, self.closing, self.closed_ready = False, None, None, False, False
         self.snapshot = self.ndef_area = self.profile = self.lf_card = self.reader_snapshot = None
         self.records, self.tags, self.settings_inputs = [], {}, {}
         self.batch_success = self.batch_failure = 0
+        self.ndef_success = self.ndef_failure = 0
+        self.bridge_capabilities = None
         self.build_ui()
         self.apply_theme()
         QApplication.instance().styleHints().colorSchemeChanged.connect(self.system_appearance_changed)
@@ -347,6 +402,8 @@ class MainWindow(QMainWindow):
         self.lf_connection = Connection(self, 'chameleon', compact=True)
         connections.addWidget(group('Magstripe reader', self.msr_connection))
         connections.addWidget(group('Chameleon Ultra · HF / LF', self.lf_connection))
+        self.cores3_connection = CoreS3Connection(self)
+        connections.addWidget(group('M5Stack CoreS3', self.cores3_connection))
         side.addWidget(self.connection_panel)
         self.clear_button = button('Clear session', self.clear_session)
         side.addWidget(self.clear_button)
@@ -365,7 +422,7 @@ class MainWindow(QMainWindow):
             ('Magstripe Write', 'MSR X6 USB / Bluetooth · MSR605 serial · MSR605X HID', self.build_msr_write),
             ('Magstripe Read', 'MSR600 keyboard swipes and connected MSR writers', self.build_msr_read),
             ('UHF Workspace', 'Piswords UHF2 · M5Stack JRD-4035 · YRM100', self.build_uhf),
-            ('HF Workspace', 'NFC records and Classic 1K data · ACS or Chameleon Ultra', self.build_hf),
+            ('HF Workspace', 'Classic 1K / 4K · NTAG21x via supported PC/SC or Grove HF', self.build_hf),
             ('LF Workspace', 'Chameleon Ultra · LF identities and T5577 tools', self.build_lf),
             ('About & help', 'Open source card tools by Midwest Gadgets', self.build_about)]:
             page = QWidget()
@@ -415,6 +472,42 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self.failed(str(exc))
 
+    def ndef_job(self, is_bulk):
+        return bulk.Job.freeze(self.ndef_family.currentData(), self.records,
+                               self.ndef_overwrite.isChecked(), self.ndef_format.isChecked(), bulk=is_bulk)
+
+    async def confirm_ndef(self, review):
+        import concurrent.futures
+        future = concurrent.futures.Future()
+        self.worker.review_target.emit((review, future))
+        return await asyncio.wrap_future(future)
+
+    def review_ndef_target(self, request):
+        review, future = request
+        if future.done():
+            return
+        accepted = (not self.closing and not (self.stop_flag and self.stop_flag.is_set())
+                    and self.review('Confirm this NFC target', review.message))
+        if not future.done():
+            future.set_result(accepted and not (self.stop_flag and self.stop_flag.is_set()))
+
+    def start_ndef_bulk(self):
+        try:
+            frozen = self.ndef_job(True)
+            require(frozen.family != 'classic4k', 'Classic4K is single-target only.')
+            name, key, auth = self.hf_readers.currentText(), self.key(), self.authentication()
+            require(name, 'Select a reader first.')
+            self.stop_flag = StopFlag()
+            stop = self.stop_flag
+            self.snapshot = self.ndef_area = None
+            self.ndef_success = self.ndef_failure = 0
+            self.ndef_bulk_totals.setText('0 verified · 0 failed')
+            self.run(lambda: bulk.run(lambda: self.service.hf_session(name, auth), frozen, key, stop,
+                                     self.worker.progress.emit, self.worker.ndef_batch.emit, self.confirm_ndef),
+                     status='Remove the initial card to arm the bulk job.', graceful=True)
+        except Exception as exc:
+            self.failed(str(exc))
+
     def msr_verify(self):
         expected = [magstripe.normalize(e.text(), i) for i, e in enumerate(self.tracks)]
         async def job():
@@ -456,9 +549,17 @@ class MainWindow(QMainWindow):
         self.hf_readers = QComboBox()
         self.hf_readers.setMinimumWidth(300)
         self.hf_key, self.hf_key_type = edit('FFFFFFFFFFFF', True), combo({'Key A': 0x60, 'Key B': 0x61})
-        layout.addWidget(group('HF reader', row(self.hf_readers, button('Refresh readers', self.refresh_hf), button('Read card', self.read_hf, True)),
+        self.ntag_password, self.ntag_pack = edit('', True), edit('', True)
+        self.ntag_password.setPlaceholderText('Explicit password only · 8 hex digits')
+        self.ntag_pack.setPlaceholderText('Optional expected PACK · 4 hex digits')
+        self.ntag_password.setEnabled(False)
+        self.ntag_pack.setEnabled(False)
+        self.hf_read_button = button('Read card', self.read_hf, True)
+        layout.addWidget(group('HF reader', row(self.hf_readers, button('Refresh readers', self.refresh_hf), self.hf_read_button),
                                row(text_label('Additional Classic key'), self.hf_key, self.hf_key_type),
                                text_label('Standard MAD, NDEF and factory keys are tried automatically. Chameleon connects in LF Workspace.')))
+        layout.addWidget(form_group('NTAG supplied authentication · session only',
+                                    [('Password', self.ntag_password), ('Expected PACK', self.ntag_pack)]))
         self.hf_readers.currentTextChanged.connect(self.hf_changed)
         tabs = QTabWidget()
         layout.addWidget(tabs)
@@ -466,7 +567,9 @@ class MainWindow(QMainWindow):
         rl = QVBoxLayout(read)
         self.hf_info = editor(True, 240)
         rl.addWidget(self.hf_info)
-        rl.addWidget(row(button('Save credentials', self.save_profile), button('Use scan as copy source', self.use_profile)))
+        self.hf_save_profile_button = button('Save credentials', self.save_profile)
+        self.hf_source_button = button('Use scan as copy source', self.use_profile)
+        rl.addWidget(row(self.hf_save_profile_button, self.hf_source_button))
         tabs.addTab(read, 'Read')
         write = QWidget()
         wl = QVBoxLayout(write)
@@ -476,21 +579,38 @@ class MainWindow(QMainWindow):
         wl.addWidget(row(button('Add record', self.add_record), button('Remove', self.remove_record), button('Move up', lambda: self.move_record(-1)), button('Move down', lambda: self.move_record(1)), button('Use existing', self.use_existing_records)))
         self.record_size = text_label('0 records')
         wl.addWidget(self.record_size)
-        wl.addWidget(button('Write records & verify', self.write_records, True))
-        wl.addWidget(text_label('Read the target first. Writes replace its record message and require an already NFC-formatted Classic 1K card.'))
+        self.ndef_family = combo({**type2.tag_types(), 'Classic 4K · single target only': 'classic4k'})
+        self.ndef_overwrite = QCheckBox('Allow replacing existing different NDEF / data')
+        self.ndef_format = QCheckBox('Allow canonical factory format / all-zero CC initialization')
+        self.ndef_family.currentIndexChanged.connect(self.update_records)
+        wl.addWidget(self.ndef_family)
+        wl.addWidget(self.ndef_overwrite)
+        wl.addWidget(self.ndef_format)
+        self.hf_write_records_button = button('Write records & verify', self.write_records, True)
+        wl.addWidget(self.hf_write_records_button)
+        self.ndef_bulk_button = button('Start bulk NDEF · 1–3 records', self.start_ndef_bulk)
+        wl.addWidget(self.ndef_bulk_button)
+        self.ndef_bulk_totals = text_label('0 verified · 0 failed')
+        self.ndef_bulk_log = editor(True, 100)
+        self.ndef_bulk_log.setMaximumBlockCount(500)
+        wl.addWidget(self.ndef_bulk_totals)
+        wl.addWidget(self.ndef_bulk_log)
+        wl.addWidget(text_label('Single target preserves larger record lists and Classic4K. Bulk freezes 1–3 records; remove the initial card and every subsequent target. Polling never writes: review each target, Cancel by default. Stop ends this transient job; failed writes are not retried.'))
         tabs.addTab(write, 'Write records')
         copy = QWidget()
         cl = QVBoxLayout(copy)
         self.profile_label = text_label('Scan card or upload card credentials to choose a source.')
         cl.addWidget(self.profile_label)
-        cl.addWidget(row(button('Scan source card', lambda: self.read_hf(for_copy=True)), button('Upload credentials', self.load_profile), button('Write from file / source', self.write_profile)))
-        cl.addWidget(button('Copy to infinity', self.start_batch, True))
+        self.hf_write_profile_button = button('Write from file / source', self.write_profile)
+        self.hf_batch_button = button('Copy to infinity', self.start_batch, True)
+        cl.addWidget(row(button('Scan source card', lambda: self.read_hf(for_copy=True)), button('Upload credentials', self.load_profile), self.hf_write_profile_button))
+        cl.addWidget(self.hf_batch_button)
         self.batch_totals = text_label('0 successes · 0 failures')
         cl.addWidget(self.batch_totals)
         self.batch_log = editor(True, 180)
         self.batch_log.setMaximumBlockCount(500)
         cl.addWidget(self.batch_log)
-        cl.addWidget(text_label('Copies 47 data blocks while preserving each target’s UID and keys. Failures are listed and the batch continues. Remove every card before the next copy. Stop finishes the current card first.'))
+        cl.addWidget(text_label('Copies family-matched data units while preserving UID, keys, locks and configuration. Remove every card before the next copy. Stop finishes the current card first.'))
         tabs.addTab(copy, 'Copy && files')
         advanced = QWidget()
         al = QVBoxLayout(advanced)
@@ -503,7 +623,8 @@ class MainWindow(QMainWindow):
         self.block_number = QSpinBox()
         self.block_number.setRange(0, 63)
         self.block_data = edit()
-        al.addWidget(row(self.block_number, self.block_data, button('Write block & verify', self.write_hf_block)))
+        self.hf_write_block_button = button('Write data unit & verify', self.write_hf_block)
+        al.addWidget(row(self.block_number, self.block_data, self.hf_write_block_button))
         self.block_table.cellClicked.connect(self.select_block)
         tabs.addTab(advanced, 'Advanced')
         tools = QWidget()
@@ -515,6 +636,42 @@ class MainWindow(QMainWindow):
         tl.addWidget(button('Review & apply settings', self.apply_reader_settings, True))
         tl.addWidget(text_label('ACR122U and ACR1552U controls use the documented ACS commands. Power changes restart the 1552; saved polling/UI changes require a replug. Percentage settings may have no effect on some hardware. RF presets credit Tototo31 and Ashsh.'))
         tabs.addTab(tools, 'Reader tools')
+        self.update_hf_controls()
+
+    def update_hf_controls(self):
+        if not hasattr(self, 'hf_write_block_button'):
+            return
+        name = self.hf_readers.currentText()
+        snapshot = self.snapshot
+        family = snapshot.card.family if snapshot else None
+        supported = bool(name)
+        if name == cores3.HF_READER:
+            slot = next((p for p in (self.bridge_capabilities or {}).get('peripherals', [])
+                         if p['channel'] == 1), {})
+            caps = slot.get('capabilities', [])
+            supported = cores3.remote_allowed(self.bridge_capabilities) and slot.get('present', False) and slot.get('kind') in ('rfid', 'rfid2')
+            family_supported = supported and ('ntag21x' if family in hf.NTAG_LAYOUTS else family) in caps
+        else:
+            family_supported = supported and family in ('classic1k', 'classic4k', *hf.NTAG_LAYOUTS)
+        self.hf_read_button.setEnabled(bool(name) and (name != cores3.HF_READER or supported))
+        self.hf_write_block_button.setEnabled(bool(family_supported and snapshot))
+        self.hf_write_records_button.setEnabled(bool(supported))
+        self.ndef_bulk_button.setEnabled(bool(supported and self.ndef_family.currentData() != 'classic4k'
+                                               and (name != 'Chameleon Ultra · connected'
+                                                    or self.ndef_family.currentData() == 'classic1k')))
+        complete = bool(family_supported and snapshot and
+                        all(b in snapshot.blocks for b in hf.eligible_units(family)))
+        self.hf_save_profile_button.setEnabled(complete)
+        self.hf_source_button.setEnabled(complete)
+        profile_supported = bool(supported and self.profile)
+        if profile_supported:
+            profile_family = hf.profile_family(self.profile)
+            if name == cores3.HF_READER:
+                profile_supported = ('ntag21x' if profile_family in hf.NTAG_LAYOUTS else profile_family) in caps
+            else:
+                profile_supported = profile_family in ('classic1k', 'classic4k', *hf.NTAG_LAYOUTS)
+        self.hf_write_profile_button.setEnabled(profile_supported)
+        self.hf_batch_button.setEnabled(profile_supported)
 
     def hf_changed(self, *_):
         self.snapshot = self.ndef_area = self.reader_snapshot = None
@@ -525,6 +682,65 @@ class MainWindow(QMainWindow):
             while self.settings_form.rowCount():
                 self.settings_form.removeRow(0)
             self.settings_inputs = {}
+        if hasattr(self, 'ntag_password'):
+            slot = next((p for p in (self.bridge_capabilities or {}).get('peripherals', [])
+                         if p['channel'] == 1), {})
+            auth = (cores3.remote_allowed(self.bridge_capabilities) and self.hf_readers.currentText() == cores3.HF_READER
+                    and 'ntag_auth' in slot.get('capabilities', []))
+            self.ntag_password.setEnabled(auth)
+            self.ntag_pack.setEnabled(auth)
+            self.ntag_password.clear()
+            self.ntag_pack.clear()
+        self.update_hf_controls()
+
+    def bridge_changed(self, value):
+        availability_changed = cores3.remote_allowed(self.bridge_capabilities) != cores3.remote_allowed(value)
+        old = {p['channel']: p for p in (self.bridge_capabilities or {}).get('peripherals', [])}
+        new = {p['channel']: p for p in (value or {}).get('peripherals', [])}
+        self.bridge_capabilities = value
+        self.cores3_connection.status.setText(cores3.mode_description(value))
+        self.cores3_connection.slots.setText('\n'.join(
+            f"{p['channel']}: {p['kind']} · {'present' if p['present'] else 'absent'} · generation {p['generation']}"
+            for p in new.values()) if value else 'No active peripheral selections')
+        if old.get(1) != new.get(1) or availability_changed:
+            index = self.hf_readers.findText(cores3.HF_READER)
+            if index >= 0:
+                self.hf_readers.removeItem(index)
+            self.hf_changed()
+            slot = new.get(1, {})
+            if cores3.remote_allowed(value) and slot.get('present') and 'identify' in slot.get('capabilities', []):
+                self.hf_readers.addItem(cores3.HF_READER)
+                self.hf_readers.setCurrentIndex(-1)
+        if old.get(2) != new.get(2) or availability_changed:
+            self.tags.clear()
+            self.uhf_tags.setRowCount(0)
+            self.uhf_selected.clear()
+            self.uhf_memory.clear()
+            if self.uhf_connection.mode.currentText() == 'CoreS3':
+                self.uhf_connection.device.clear()
+                self.uhf_connection.status.setText('Peripheral changed; refresh and reconnect.')
+                for widget in (self.uhf_connection.mode, self.uhf_connection.device,
+                               self.uhf_connection.reader_profile):
+                    widget.setEnabled(True)
+        if old.get(3) != new.get(3) or availability_changed:
+            self.lf_card = None
+            self.lf_result.clear()
+            if self.lf_connection.mode.currentText() == 'CoreS3':
+                self.lf_connection.device.clear()
+                self.lf_connection.status.setText('Peripheral changed; refresh and reconnect.')
+                index = self.hf_readers.findText('Chameleon Ultra · connected')
+                if index >= 0:
+                    self.hf_readers.removeItem(index)
+                self.hf_changed()
+
+    def authentication(self):
+        if not self.ntag_password.isEnabled():
+            return b'\0'
+        password, pack = self.ntag_password.text().strip(), self.ntag_pack.text().strip()
+        require(not pack or password, 'Supply a password before an expected PACK.')
+        if not password:
+            return b'\0'
+        return (b'\2' + hex_bytes(password, 4) + hex_bytes(pack, 2)) if pack else b'\1' + hex_bytes(password, 4)
 
     def key(self):
         return hex_bytes(self.hf_key.text(), 6), self.hf_key_type.currentData()
@@ -536,6 +752,10 @@ class MainWindow(QMainWindow):
             self.hf_readers.addItems(names)
             if self.service.chameleon and not self.service.chameleon.transport.closed:
                 self.hf_readers.addItem('Chameleon Ultra · connected')
+            slot = next((p for p in (self.bridge_capabilities or {}).get('peripherals', [])
+                         if p['channel'] == 1), {})
+            if slot.get('present') and 'identify' in slot.get('capabilities', []):
+                self.hf_readers.addItem(cores3.HF_READER)
             if self.hf_readers.findText(selected) >= 0:
                 self.hf_readers.setCurrentText(selected)
             self.note('Select a reader, place a card, and read it.')
@@ -543,28 +763,31 @@ class MainWindow(QMainWindow):
 
     def read_hf(self, checked=False, for_copy=False):
         try:
-            name, key = self.hf_readers.currentText(), self.key()
+            name, key, auth = self.hf_readers.currentText(), self.key(), self.authentication()
             def complete(snapshot):
                 self.show_snapshot(snapshot)
                 if for_copy:
                     self.use_profile()
-            self.run(lambda: self.service.hf_read(name, key), complete, 'Reading card and NFC records…')
+            self.run(lambda: self.service.hf_read(name, key, auth), complete, 'Reading card and NFC records…')
         except Exception as exc:
             self.failed(str(exc))
 
     def show_snapshot(self, snapshot):
         self.snapshot, self.ndef_area = snapshot, None
         info = snapshot.card
-        lines = ['MIFARE Classic 1K' if info.classic else 'Other NFC card (identity only)',
+        index = self.ndef_family.findData(info.family)
+        if index >= 0:
+            self.ndef_family.setCurrentIndex(index)
+        lines = [info.family if info.classic or info.ntag else 'Other NFC card (identity only)',
                  'UID: '+info.uid.hex(':').upper()]
         if info.atr:
             lines.append('ATR: '+info.atr.hex(' ').upper())
         if info.atqa:
             lines.append(f'ATQA: {info.atqa.hex().upper()} · SAK: {info.sak:02X}')
         lines.append(f'Read {len(snapshot.blocks)} blocks; {len(snapshot.errors)} unreadable.')
-        if info.classic:
+        if info.classic or info.ntag:
             try:
-                self.ndef_area = hf.ClassicNDEF(snapshot)
+                self.ndef_area = ntag.Type2NDEF(snapshot, self.authentication() != b'\0') if info.ntag else hf.ClassicNDEF(snapshot)
                 lines += [f'NFC records: {self.ndef_area.size} / {self.ndef_area.capacity} bytes',
                           'Writable: '+('Yes' if self.ndef_area.writable else 'No, with the available keys')]
                 for i, record in enumerate(self.ndef_area.records):
@@ -573,12 +796,19 @@ class MainWindow(QMainWindow):
             except CardError as exc:
                 lines.append(str(exc))
         self.hf_info.setPlainText('\n'.join(lines))
-        self.block_table.setRowCount(64 if info.classic else 0)
+        self.block_table.setHorizontalHeaderLabels(['Page' if info.ntag else 'Block', 'Hex data', 'State'])
+        self.block_table.setRowCount(info.unit_count)
+        self.block_number.setRange(0, max(0, info.unit_count - 1))
+        self.block_data.setPlaceholderText(f'{info.unit_size} data bytes')
         for b in range(self.block_table.rowCount()):
-            state = snapshot.errors.get(b, 'Data' if hf.data_block(b) else 'Protected')
+            eligible = b in hf.eligible_units(info.family) if info.classic or info.ntag else False
+            state = snapshot.errors.get(b, 'Data' if eligible else 'Protected / metadata')
+            if info.ntag and b >= info.unit_count - 2:
+                state = 'Credential bytes not read'
             for col, value in enumerate([str(b), snapshot.blocks.get(b, b'').hex(' ').upper(), state]):
                 self.block_table.setItem(b, col, QTableWidgetItem(value))
         self.note('Read complete.' if not snapshot.errors else 'Some blocks could not be read. Check the key and card placement.')
+        self.update_hf_controls()
 
     def add_record(self):
         dialog = RecordDialog(self)
@@ -592,7 +822,11 @@ class MainWindow(QMainWindow):
             title, value = r.display()
             self.record_list.addItem(title+' · '+value.replace('\n', ' ')[:160])
         try:
-            self.record_size.setText(f'{len(self.records)} records · {len(ndef.encode(self.records)) if self.records else 0} bytes')
+            family = self.ndef_family.currentData() if hasattr(self, 'ndef_family') else 'classic1k'
+            size = len(ndef.encode(self.records)) if self.records else 0
+            capacity = type2.capacity(family) if family != 'classic4k' else 'target-specific'
+            self.record_size.setText(f'{len(self.records)} records · {size} / {capacity} message bytes upper bound · actual target TLVs may reduce capacity · bulk maximum 3')
+            self.update_hf_controls()
         except CardError as exc:
             self.record_size.setText(str(exc))
 
@@ -618,15 +852,22 @@ class MainWindow(QMainWindow):
 
     def write_records(self):
         try:
-            require(self.ndef_area is not None, 'Read the target’s NFC records first.')
-            records, expected, key, name = list(self.records), self.ndef_area, self.key(), self.hf_readers.currentText()
-            expected.replacing(records)
-            if not self.review('Write NFC records', f'Replace the records on card {expected.card.uid.hex().upper()} with {len(records)} queued record(s)?\nUID, keys and sector trailers remain unchanged.'):
-                return
+            key, name, auth = self.key(), self.hf_readers.currentText(), self.authentication()
             async def job():
-                async with self.service.hf_session(name) as client:
-                    return await client.write_records(records, expected, key)
-            self.run(job, self.show_snapshot, 'Writing records and verifying…')
+                async with self.service.hf_session(name, auth) as client:
+                    review = await bulk.prepare(client, frozen, key)
+                    if not await self.confirm_ndef(review):
+                        review.used = True
+                        return 'Target cancelled; no write.'
+                    snapshot, _ = await bulk.execute(client, review, key)
+                    return snapshot
+            frozen = self.ndef_job(False)
+            def complete(result):
+                if isinstance(result, str):
+                    self.note(result)
+                else:
+                    self.show_snapshot(result)
+            self.run(job, complete, 'Reading target for a fresh write review…')
         except Exception as exc:
             self.failed(str(exc))
 
@@ -634,7 +875,8 @@ class MainWindow(QMainWindow):
         try:
             require(self.snapshot is not None, 'Scan the source card first.')
             self.profile = hf.profile_from_snapshot(self.snapshot)
-            self.profile_label.setText('Source ready · 47 data blocks · UID and keys excluded')
+            self.profile_label.setText(f'Source ready · {self.snapshot.card.family} · {len(hf.profile_blocks(self.profile))} data units · no credentials')
+            self.update_hf_controls()
             self.note('Copy source captured. Remove it before placing target cards.')
         except Exception as exc:
             self.failed(str(exc))
@@ -643,7 +885,7 @@ class MainWindow(QMainWindow):
         try:
             require(self.snapshot is not None, 'Read all source sectors first.')
             profile = hf.profile_from_snapshot(self.snapshot)
-            path, _ = QFileDialog.getSaveFileName(self, 'Save card credentials', 'Classic-1K.qcard', 'Quadband card (*.qcard)')
+            path, _ = QFileDialog.getSaveFileName(self, 'Save card credentials', self.snapshot.card.family+'.qcard', 'Quadband card (*.qcard)')
             if path:
                 save_json(path, profile)
                 self.note('Credentials saved locally. UID and authentication keys are excluded.')
@@ -657,7 +899,8 @@ class MainWindow(QMainWindow):
                 profile = load_json(path)
                 hf.profile_blocks(profile)
                 self.profile = profile
-                self.profile_label.setText(f'{Path(path).name} · 47 data blocks ready')
+                self.profile_label.setText(f'{Path(path).name} · {hf.profile_family(profile)} · {len(hf.profile_blocks(profile))} data units ready')
+                self.update_hf_controls()
             except Exception as exc:
                 self.failed(str(exc))
 
@@ -665,13 +908,14 @@ class MainWindow(QMainWindow):
         try:
             require(self.profile is not None, 'Scan a source or upload a .qcard file first.')
             profile, name, key = self.profile, self.hf_readers.currentText(), self.key()
+            auth = self.authentication()
             hf.profile_blocks(profile)
-            if not self.review('Write card data', 'Place one target card. Replace its 47 data blocks with the loaded source?\nEach card keeps its UID and keys. This is a data copy, not NFC formatting.'):
+            if not self.review('Write card data', f'Place one {hf.profile_family(profile)} target card. Replace {len(hf.profile_blocks(profile))} data units?\nUID, credentials, locks and configuration remain unchanged.'):
                 return
             async def job():
-                async with self.service.hf_session(name) as client:
+                async with self.service.hf_session(name, auth) as client:
                     await client.write_profile(profile, key)
-                return 'All 47 target data blocks verified.'
+                return f'All {len(hf.profile_blocks(profile))} target data units verified.'
             self.snapshot = self.ndef_area = None
             self.run(job, status='Copying and verifying data…')
         except Exception as exc:
@@ -681,13 +925,14 @@ class MainWindow(QMainWindow):
         try:
             require(self.profile is not None, 'Scan card or upload card credentials first.')
             profile, name, key = self.profile, self.hf_readers.currentText(), self.key()
+            auth = self.authentication()
             hf.profile_blocks(profile)
             if not self.review('Copy to infinity', 'Start copying the source to every target presented?\nRemove the source first. Each target keeps its UID and keys. Failures will be listed and the batch will continue.'):
                 return
             self.stop_flag = StopFlag()
             stop = self.stop_flag
             self.snapshot = self.ndef_area = None
-            self.run(lambda: hf.copy_forever(lambda: self.service.hf_session(name), profile, key, stop,
+            self.run(lambda: hf.copy_forever(lambda: self.service.hf_session(name, auth), profile, key, stop,
                                              self.worker.progress.emit, self.worker.batch.emit), status='Remove the source card to begin.', graceful=True)
         except Exception as exc:
             self.failed(str(exc))
@@ -698,6 +943,12 @@ class MainWindow(QMainWindow):
         self.batch_totals.setText(f'{self.batch_success} successes · {self.batch_failure} failures')
         self.batch_log.appendPlainText(datetime.now().strftime('%H:%M:%S')+' · '+('SUCCESS' if success else 'FAILED')+' · '+detail.replace('\n', ' '))
 
+    def ndef_batch_result(self, success, detail):
+        self.ndef_success += int(success)
+        self.ndef_failure += int(not success)
+        self.ndef_bulk_totals.setText(f'{self.ndef_success} verified · {self.ndef_failure} failed')
+        self.ndef_bulk_log.appendPlainText(('VERIFIED' if success else 'FAILED / UNVERIFIED')+' · '+detail)
+
     def select_block(self, block, _):
         self.block_number.setValue(block)
         if self.snapshot:
@@ -705,12 +956,13 @@ class MainWindow(QMainWindow):
 
     def write_hf_block(self):
         try:
-            snapshot, block, data, name = self.snapshot, self.block_number.value(), hex_bytes(self.block_data.text(), 16), self.hf_readers.currentText()
-            require(snapshot is not None and hf.data_block(block), 'Read a data block first. UID and sector trailers are protected.')
+            snapshot, block, name = self.snapshot, self.block_number.value(), self.hf_readers.currentText()
+            require(snapshot is not None and block in hf.eligible_units(snapshot.card.family), 'Read an eligible data unit first; metadata is protected.')
+            data, auth = hex_bytes(self.block_data.text(), snapshot.card.unit_size), self.authentication()
             if not self.review('Write data block', f'Replace block {block} on card {snapshot.card.uid.hex().upper()}?\n{data.hex(" ").upper()}'):
                 return
             async def job():
-                async with self.service.hf_session(name) as client:
+                async with self.service.hf_session(name, auth) as client:
                     await client.write_block(block, data, snapshot)
                 return f'Block {block} verified. Read the card again to refresh the snapshot.'
             self.snapshot = self.ndef_area = None
@@ -964,7 +1216,7 @@ class MainWindow(QMainWindow):
             text_label('Use one application per reader. USB and Bluetooth variants differ by firmware. Physical writes are never automatically retried; read the card after any interrupted or unverified write.'),
             text_label('The port has automated protocol and simulated-reader tests. Windows/Linux hardware validation is still required. The native Mac app and all source files are included in the project.'),
             button('Show license', self.show_license)))
-        layout.addWidget(group('Data and privacy', text_label('Card data stays local. Nothing is uploaded, and there is no telemetry. Files are saved only when you choose Save. .qcard files contain 47 HF data blocks; .qlf files contain an LF format and identity. Both work with the native Mac app. Clear session removes data from this window; it does not erase files or the system clipboard.')))
+        layout.addWidget(group('Data and privacy', text_label('Card data stays local. Nothing is uploaded, and there is no telemetry. Files are saved only when you choose Save. .qcard files contain family-matched data units without UID, keys or passwords; .qlf files contain an LF format and identity. Both work with the native Mac app. Clear session removes data from this window; it does not erase files or the system clipboard.')))
 
     def show_license(self):
         dialog = QDialog(self)
@@ -1011,6 +1263,7 @@ class MainWindow(QMainWindow):
         self.clear_button.setEnabled(True)
         self.stop_button.setEnabled(False)
         self.stop_flag = None
+        self.update_hf_controls()
 
     def done(self, result):
         callback, self.callback = self.callback, None
@@ -1029,6 +1282,7 @@ class MainWindow(QMainWindow):
 
     def failed(self, message):
         self.callback = None
+        self.snapshot = self.ndef_area = None
         self.finish()
         self.status.setText(message)
         self.status.setStyleSheet(f'color: {"#ffa99b" if self.dark_mode else "#a52d20"};')
@@ -1054,6 +1308,13 @@ class MainWindow(QMainWindow):
                        self.lf_result, self.batch_log]:
             widget.clear()
         self.hf_key.setText('FFFFFFFFFFFF')
+        self.ntag_password.clear()
+        self.ntag_pack.clear()
+        self.ndef_overwrite.setChecked(False)
+        self.ndef_format.setChecked(False)
+        self.ndef_bulk_log.clear()
+        self.ndef_bulk_totals.setText('0 verified · 0 failed')
+        self.ndef_success = self.ndef_failure = 0
         self.uhf_password.setText('00000000')
         self.block_table.setRowCount(0)
         self.uhf_tags.setRowCount(0)
@@ -1061,6 +1322,7 @@ class MainWindow(QMainWindow):
         self.batch_totals.setText('0 successes · 0 failures')
         self.profile_label.setText('Scan card or upload card credentials to choose a source.')
         self.update_records()
+        self.update_hf_controls()
         self.note('Session cleared.')
 
     def begin_close(self):

@@ -33,3 +33,21 @@ The M100-family drivers are independent implementations of the documented UART p
 - M5Stack Unit RFID-UHF Common Control Commands: https://m5stack-doc.oss-cn-shenzhen.aliyuncs.com/842/Unit-RFID-UHF-Protocol-EN.pdf
 - M5Stack reference examples (MIT; reference only): https://github.com/m5stack/M5Unit-UHF-RFID
 - MagicRF M100/QM100 firmware command reference, linked by the YRM100 project: https://github.com/frux-c/uhf_rfid/blob/master/assets/res/MagicRF_M100%26QM100_Firmware_manual_en.pdf
+
+## CoreS3 firmware dependencies
+
+The development firmware uses native ESP-IDF/NimBLE and Espressif USB CDC-ACM (Apache-2.0 and their bundled component notices), M5Unified/M5GFX, M5Unit-RFID/M5Unit-NFC, M5UnitUnified, M5HAL and M5Utility (MIT and applicable bundled notices). Exact source URLs and immutable revisions are in firmware/cores3/dependencies.lock. Preserve the fetched licenses/font/third-party notices when distributing a binary; scripts/package-cores3.py gathers notice files alongside the local firmware bundle and includes the original application source. This does not relicense upstream code. Hardware SDKs and generated private configuration are excluded from public application source archives.
+
+Studio Sans is a resampled ASCII coverage asset derived from DejaVu Sans glyphs in the pinned M5GFX dependency. DejaVu changes are public domain; the underlying Bitstream/Arev notices and permissions are preserved in firmware/cores3/main/ui/LICENSE-DejaVu.txt and LICENSE-StudioSans.txt in firmware bundles. No system fonts or proprietary font files are redistributed.
+
+## Browser installer
+
+The CoreS3 browser installer uses esptool-js 0.7.1 (Apache-2.0), crypto-js 4.2.0 (MIT), and their pinned dependency graph. Vite and Playwright are build/test tools, not remote scripts loaded by end users. webflasher/package-lock.json records exact package sources, versions and integrity hashes. The site build generates THIRD-PARTY.txt with installed dependency license texts and metadata; the complete bundled JavaScript and those notices are hosted together on the same origin. Firmware stub and library code retain their upstream terms. No proprietary fonts, remote analytics or card-data uploads are added.
+
+## CardputerZero Linux application
+
+The handheld application directly shares Quadband's portable C++ engines and guards; it does not bundle ESP-IDF or M5Unified. Its independently implemented Linux reader adapters reference the existing firmware and M5Stack's documented MFRC522/WS1850S and M100 protocols. Original Tototo31 / Ashsh credits remain in the UI, source and package.
+
+LVGL 9.5.0 is MIT; devices/cardputerzero/dependencies.lock records its immutable source revision. Its generated Montserrat fonts include Font Awesome glyphs; preserve the SIL Open Font License and upstream Font Awesome notice in devices/cardputerzero/licenses/. SDL2 (or SDL2-compat/SDL3) is a zlib-licensed host-preview dependency and is not linked into the device executable.
+
+The arm64 development package is statically built with Zig 0.15.1 and the bundled musl/LLVM libc++/libc++abi/libunwind runtimes. It includes their required notices, the application GPL-3.0-only source archive, branding terms and build provenance. The compiler itself and operating-system image are not distributed in the application package. The official CardputerZero Template and launcher are integration references, not vendored application code; their UI/packaging source remains available at https://github.com/CardputerZero/Template and https://github.com/CardputerZero/launcher .

@@ -4,6 +4,8 @@ import AppKit
 import MagStripeCore
 
 @MainActor final class UHFModel: ObservableObject {
+    weak var hub: CoreS3Hub?
+    @Published var useCoreS3 = false
     @Published var ports: [SerialDevice] = []
     @Published var selectedPort = ""
     @Published var baud = 0
@@ -44,6 +46,34 @@ import MagStripeCore
         power = min(max(power, profile.powerRange.lowerBound), profile.powerRange.upperBound)
         tags = []; selectedTag = nil; memory = nil; writePreview = nil
     }
+    func releaseBridgeNormally() async {
+        guard useCoreS3, connected, !busy, let client else { return }
+        do { if scanning { try await client.stopInventory(); scanning = false } }
+        catch { note("UHF inventory stop could not be confirmed. \(error.localizedDescription)",.error) }
+        disconnect(silent:true)
+    }
+    private func connectBridge() {
+        guard !busy, !connected, let session = hub?.session,
+              let slot = session.capabilities?.peripherals.first(where: { $0.channel == 2 && $0.present && $0.capabilities.contains("m100") }) else {
+            note("Connect the CoreS3 hub with its detected UHF module first.",.error); return
+        }
+        profile = .jrd4035
+        disconnect(silent:true)
+        run("Identifying CoreS3 UHF module…") { [self] in
+            let transport = CoreS3M100Transport(session:session,generation:slot.generation)
+            let reader = M100Client(transport:transport,profile:.jrd4035)
+            do {
+                try transport.begin(); defer { transport.end() }
+                self.version = try await reader.identify()
+                self.channel = transport; self.client = reader
+                transport.onTag = { [weak self] in self?.accept($0) }
+                transport.onDisconnect = { [weak self] in self?.connectionLost($0) }
+                reader.onInventoryError = { [weak self] in self?.connectionLost($0) }
+                try await self.loadDetails()
+                self.connected = true; self.note("CoreS3 UHF module ready through the shared BLE session.",.success)
+            } catch { transport.close(); self.channel = nil; self.client = nil; throw error }
+        }
+    }
     func refresh() {
         guard !busy && !connected else { return }
         ports = SerialDevice.scan()
@@ -55,6 +85,7 @@ import MagStripeCore
         status = text; statusKind = kind; log.insert("\(Date().formatted(date:.omitted,time:.standard))  \(text)",at:0); log = Array(log.prefix(80))
     }
     func connect() {
+        if useCoreS3 { connectBridge(); return }
         guard !busy, !selectedPort.isEmpty else { return }
         guard profile.isM100 || (UInt8(address).map { $0 < 255 } == true) else { note("Enter a reader address from 0 to 254.",.error); return }
         let addr = profile.isM100 ? UInt8(0) : UInt8(address)!
@@ -98,7 +129,7 @@ import MagStripeCore
         }
     }
     private func connectionLost(_ error: Error) {
-        connected = false; scanning = false
+        connected = false; scanning = false; connectionID = UUID(); writePreview = nil; memory = nil
         note(error.localizedDescription,.error)
     }
     private func loadDetails() async throws {
@@ -108,6 +139,12 @@ import MagStripeCore
         details = settings.details
     }
     func disconnect(silent: Bool = false) {
+        if !silent, useCoreS3, scanning, !busy, let client {
+            run("Stopping CoreS3 inventory before disconnecting…") {
+                try await client.stopInventory(); self.scanning = false; self.disconnect(silent:silent)
+            }
+            return
+        }
         generation += 1; connectionID = UUID(); operation?.cancel(); operation = nil; client?.close(); channel?.close(); channel = nil; client = nil
         connected = false; scanning = false; busy = false; writing = false; version = ""; details = ""; tags = []; selectedTag = nil; memory = nil; writePreview = nil
         if !silent { note("UHF reader disconnected.") }
@@ -206,7 +243,12 @@ import MagStripeCore
         guard !busy else { return }
         busy = true; note(message,.working); generation += 1; let token = generation
         operation = Task { [self] in
-            do { try await work() } catch { if token == generation { note(error.localizedDescription,.error) } }
+            let bridge = channel as? CoreS3M100Transport
+            do {
+                if bridge?.isScoped == false { try bridge?.begin() }
+                defer { if !scanning { bridge?.end() } }
+                try await work()
+            } catch { if token == generation { note(error.localizedDescription,.error) } }
             if token == generation { busy = false; writing = false; operation = nil }
         }
     }

@@ -21,7 +21,7 @@ struct ContentView: View {
                         switch model.selectedPage {
                         case .write: writer
                         case .read: reader
-                        case .nfc: NFCView(model: model.nfc)
+                        case .nfc: NFCView(model: model.nfc,hub:model.cores3)
                         case .uhf: UHFView(model:model.uhf)
                         case .lf: LFView(model:model.lf)
                         case .help: help
@@ -63,6 +63,8 @@ struct ContentView: View {
             WriterConnectionView(model: model, bluetooth: model.bluetooth)
             Rectangle().fill(.white.opacity(0.12)).frame(height: 1)
             ChameleonConnectionView(model: model.lf, bluetooth: model.lf.bluetooth)
+            Rectangle().fill(.white.opacity(0.12)).frame(height: 1)
+            CoreS3ConnectionView(hub:model.cores3)
             Spacer(minLength: 14)
             VStack(alignment: .leading, spacing: 8) {
                 Label("Local workspace", systemImage: "desktopcomputer").font(.system(size: 12, weight: .medium))

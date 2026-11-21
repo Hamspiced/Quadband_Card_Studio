@@ -1,0 +1,19 @@
+{
+  "name": "Quadband CoreS3",
+  "version": "0.4.0",
+  "protocol": 1,
+  "target": "esp32s3",
+  "board": "M5Stack CoreS3",
+  "sdk": "ESP-IDF 5.5.3",
+  "buildHelper": "build.py",
+  "dependencyLock": "dependencies.lock",
+  "ports": {
+    "hf": {"connector": "Port A", "address": 40, "sda": 2, "scl": 1, "backend": "M5.Ex_I2C"},
+    "uhf": {"connector": "Port C", "baud": 115200, "tx": 17, "rx": 18, "backend": "ESP-IDF UART1"},
+    "usb": {"connector": "main USB-C OTG", "backend": "ESP-IDF USB Host CDC-ACM",
+            "vid": 26728, "pid": 34438, "localAuthorizationPerBoot": true}
+  },
+  "modes": {"boot": "home", "peripheralDesktopAccess": "connected", "standaloneCardTools": true},
+  "storage": {"bondsOnly": false, "appearancePersisted": true, "cardDataPersisted": false, "credentialsPersisted": false},
+  "hardwareValidated": false
+}

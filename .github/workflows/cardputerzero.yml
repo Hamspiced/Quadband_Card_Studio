@@ -1,0 +1,44 @@
+name: CardputerZero application
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test-and-package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+      - name: Host build dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build pkg-config libsdl2-dev
+      - name: Sanitizer tests and headless simulator
+        run: python devices/cardputerzero/build.py --sanitize --test --smoke
+      - name: Pinned arm64 cross compiler
+        run: |
+          mkdir -p .build/zero-toolchain
+          curl --fail --location https://ziglang.org/download/0.15.1/zig-x86_64-linux-0.15.1.tar.xz -o .build/zero-toolchain/compiler.tar.xz
+          printf '%s  %s\n' c61c5da6edeea14ca51ecd5e4520c6f4189ef5250383db33d01848293bfafe05 .build/zero-toolchain/compiler.tar.xz | sha256sum -c -
+          tar -xJf .build/zero-toolchain/compiler.tar.xz -C .build/zero-toolchain
+      - name: Cross-build and package without deployment
+        run: |
+          python devices/cardputerzero/build.py --device --zig "$PWD/.build/zero-toolchain/zig-x86_64-linux-0.15.1/zig"
+          python devices/cardputerzero/package.py --zig-root "$PWD/.build/zero-toolchain/zig-x86_64-linux-0.15.1"
+          python -m unittest discover -s devices/cardputerzero/tests -p 'test_*.py'
+          dpkg-deb --info dist/quadband-cardputerzero_0.3.0_arm64.deb
+          dpkg-deb --contents dist/quadband-cardputerzero_0.3.0_arm64.deb
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: Quadband-CardputerZero-development
+          path: |
+            dist/quadband-cardputerzero_*.deb
+            dist/quadband-cardputerzero_*.deb.sha256
+            .build/cardputerzero-arm64/BUILD-INFO.json
+            .build/cardputerzero-host/renders/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14

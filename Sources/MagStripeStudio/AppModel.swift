@@ -29,6 +29,8 @@ import MagStripeCore
     let nfc: NFCModel
     let uhf = UHFModel()
     let lf = LFModel()
+    let cores3 = CoreS3Hub()
+    private var bridgeCapabilities: CoreS3Capabilities?
     @Published var serialPorts: [SerialDevice] = []
     @Published var selectedSerial = ""
     @Published var serialBaud = 9600
@@ -51,7 +53,58 @@ import MagStripeCore
         do { try CardData(drafts).validate(densities: densities); return nil }
         catch { return error.localizedDescription }
     }
-    init(scanDevices: Bool = true) { nfc = NFCModel(service:WorkspaceNFCService(lf:lf)); hfBusyObservation = nfc.$busy.sink { [weak lf] value in lf?.hfWorkflowBusy = value }; nfc.autoDiscovery = scanDevices; uhf.autoDiscovery = scanDevices; lf.autoDiscovery = scanDevices; if scanDevices { refresh() } }
+    init(scanDevices: Bool = true) {
+        nfc = NFCModel(service:WorkspaceNFCService(lf:lf,hub:cores3))
+        lf.hub = cores3; uhf.hub = cores3
+        nfc.writableFamily = { [weak cores3,weak lf] reader,family in
+            if reader.hasPrefix("CoreS3 · ") {
+                guard cores3?.capabilities?.remoteAllowed == true,
+                      let slot = cores3?.capabilities?.peripherals.first(where: { $0.channel == 1 && $0.present }),
+                      slot.kind == "rfid" || slot.kind == "rfid2" else { return false }
+                return slot.capabilities.contains(family.isNTAG ? "ntag21x" : family.rawValue)
+            }
+            if reader.hasPrefix("Chameleon Ultra · ") { return family.isClassic && lf?.info?.capabilities.contains(2009) == true }
+            return family.isClassic || family.isNTAG
+        }
+        cores3.onChange = { [weak self] value in self?.bridgeChanged(value) }
+        nfc.formattingFamily = { [weak cores3] reader,family in
+            if reader.hasPrefix("Chameleon Ultra · ") { return false }
+            if reader.hasPrefix("CoreS3 · ") {
+                guard cores3?.capabilities?.remoteAllowed == true,
+                      let slot = cores3?.capabilities?.peripherals.first(where: { $0.channel == 1 && $0.present }),
+                      slot.kind == "rfid" || slot.kind == "rfid2" else { return false }
+                return slot.capabilities.contains(family == .classic1k ? "classic1k_format" : "ntag_initialize")
+            }
+            return family == .classic1k || family.isNTAG
+        }
+        cores3.prepareDisconnect = { [weak lf,weak uhf] in await uhf?.releaseBridgeNormally(); await lf?.releaseBridgeNormally() }
+        hfBusyObservation = nfc.$busy.sink { [weak lf] value in lf?.hfWorkflowBusy = value }
+        nfc.autoDiscovery = scanDevices; uhf.autoDiscovery = scanDevices; lf.autoDiscovery = scanDevices
+        if scanDevices { refresh() }
+    }
+    private func bridgeChanged(_ value: CoreS3Capabilities?) {
+        let old = bridgeCapabilities; bridgeCapabilities = value
+        if value?.remoteAllowed != true, nfc.selectedReader.hasPrefix("CoreS3 · ") || nfc.selectedReader == "Chameleon Ultra · CoreS3" {
+            nfc.invalidateBulkDraft()
+        }
+        func changed(_ channel: UInt8) -> Bool {
+            old?.peripherals.first { $0.channel == channel } != value?.peripherals.first { $0.channel == channel } || old?.deviceId != value?.deviceId
+        }
+        if changed(1), nfc.selectedReader.hasPrefix("CoreS3 · ") {
+            nfc.requiresExplicitReaderSelection = true
+            nfc.operation?.cancel(); nfc.selectedReader = ""; nfc.readerChanged()
+            nfc.status = "CoreS3 HF reader changed. Refresh and explicitly select it again."
+            nfc.statusKind = .error
+        }
+        if changed(2), uhf.useCoreS3, uhf.connected { uhf.disconnect(); uhf.note("CoreS3 UHF module changed. Reconnect it explicitly.",.error) }
+        if changed(3), lf.link == .cores3, lf.connected { lf.close(); lf.note("CoreS3 USB Chameleon changed. Reconnect it explicitly.",.error) }
+        if changed(3), nfc.selectedReader == "Chameleon Ultra · CoreS3" {
+            nfc.requiresExplicitReaderSelection = true
+            nfc.operation?.cancel(); nfc.selectedReader = ""; nfc.readerChanged()
+            nfc.status = "CoreS3 USB Chameleon changed. Reconnect it, then explicitly select its HF reader again."
+            nfc.statusKind = .error
+        }
+    }
     func refresh() {
         guard !busy else { return }
         devices = discovery.scan()
@@ -262,6 +315,7 @@ import MagStripeCore
     func clearSession() {
         guard !busy, !nfc.busy, !uhf.busy, !uhf.scanning, !lf.busy else { return }
         nfc.clear(); uhf.clear(); lf.clear()
+        cores3.password = ""; cores3.pack = ""; cores3.usePassword = false
         keyboardArmed = false; drafts = ["", "", ""]; readCard = nil; expectedCard = nil
         verification = []; log = []; receivedAt = nil; status = "Session cleared."; statusKind = .neutral
         rawSwipe = ""

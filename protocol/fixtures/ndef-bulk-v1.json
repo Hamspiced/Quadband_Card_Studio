@@ -1,0 +1,29 @@
+{
+  "bulkLimit": 3,
+  "families": ["classic1k", "ntag213", "ntag215", "ntag216"],
+  "textBoundaries": [
+    {"asciiCharacters": 247, "messageBytes": 254, "tlvHeaderBytes": 2},
+    {"asciiCharacters": 248, "messageBytes": 255, "tlvHeaderBytes": 4}
+  ],
+  "formatOperations": {
+    "classic1k": {"operation": 22, "capability": "classic1k_format", "snapshotBytes": 1024},
+    "ntag213": {"operation": 23, "capability": "ntag_initialize", "snapshotBytes": 172, "cc": "e1101200"},
+    "ntag215": {"operation": 23, "capability": "ntag_initialize", "snapshotBytes": 532, "cc": "e1103e00"},
+    "ntag216": {"operation": 23, "capability": "ntag_initialize", "snapshotBytes": 916, "cc": "e1106d00"}
+  },
+  "classicFormat": {
+    "madInfo": 1,
+    "dataTrailer": "d3f7d3f7d3f77f078840ffffffffffff",
+    "directoryTrailer": "a0a1a2a3a4a5787788c1ffffffffffff",
+    "aid": "03e1",
+    "emptyNdef": "0300fe"
+  },
+  "policy": {
+    "initialRemovalRequired": true,
+    "perTargetReviewRequired": true,
+    "overwriteDefault": false,
+    "formatDefault": false,
+    "readerErrorIsRemoval": false,
+    "automaticWriteRetry": false
+  }
+}

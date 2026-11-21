@@ -208,7 +208,7 @@ final class MagStripeAppTests: XCTestCase {
         var mad: [UInt8] = [0,1] + Array(repeating: [UInt8(3),0xE1], count: 15).flatMap { $0 }
         mad[0] = ClassicNDEF.crc(Array(mad.dropFirst()))
         blocks[1] = Array(mad.prefix(16)); blocks[2] = Array(mad.suffix(16))
-        blocks[3]![9] = 0xC1
+        blocks[3] = [0,0,0,0,0,0,0x78,0x77,0x88,0xC1,255,255,255,255,255,255]
         for sector in 1..<16 { blocks[sector*4+3] = [0,0,0,0,0,0,0x7F,0x07,0x88,0x40,255,255,255,255,255,255] }
         let message = try NDEFCodec.encode([.uri("https://midwestgadgets.org")])
         let area = [3,UInt8(message.count)] + message + [0xFE] + Array(repeating: UInt8(0), count: 720-message.count-3)

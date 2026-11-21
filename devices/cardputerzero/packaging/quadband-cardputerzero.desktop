@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Quadband Card Studio
+Comment=HF, UHF and LF card tools for CardputerZero
+Exec=/usr/bin/quadband-cardputerzero
+Icon=share/images/quadband-cardputerzero.png
+Terminal=false
+Categories=Utility;
+StartupNotify=false

@@ -1,0 +1,2 @@
+# Permit gpio-group applications to enable only the dedicated Grove 5V output.
+ACTION=="add", SUBSYSTEM=="leds", KERNEL=="grove_5v_out", RUN+="/bin/chgrp gpio /sys%p/brightness", RUN+="/bin/chmod 0660 /sys%p/brightness"

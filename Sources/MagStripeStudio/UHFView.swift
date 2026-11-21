@@ -43,22 +43,27 @@ struct UHFView: View {
     private var connection: some View {
         VStack(alignment:.leading,spacing:14) {
             HStack { Label("UHF READER · USB SERIAL",systemImage:"cable.connector").font(.system(size:11,weight:.semibold)); Spacer(); Button("Refresh") { model.refresh() }.disabled(model.connected || model.busy) }
+            Toggle("Use detected CoreS3 UHF module (shared BLE session)",isOn:$model.useCoreS3)
+                .disabled(model.connected || model.busy)
+                .onChange(of:model.useCoreS3) { value in if value { model.profile = .jrd4035; model.profileChanged() } }
+            if !model.useCoreS3 {
             Picker("Reader profile", selection: $model.profile) {
                 ForEach(UHFReaderProfile.allCases) { Text($0.rawValue).tag($0) }
             }.disabled(model.connected || model.busy).onChange(of: model.profile) { _ in model.profileChanged() }
             if model.ports.isEmpty { Text("Connect your reader or USB-TTL serial adapter, then refresh.").font(.callout).foregroundColor(.secondary) }
             else { Picker("Reader",selection:$model.selectedPort) { ForEach(model.ports) { Text($0.label).tag($0.path) } }.disabled(model.connected || model.busy) }
+            }
             HStack(spacing:16) {
-                Picker("Baud rate",selection:$model.baud) {
+                if !model.useCoreS3 { Picker("Baud rate",selection:$model.baud) {
                     Text("Detect automatically").tag(0)
                     ForEach([9600,19200,38400,57600,115200,230400],id:\.self) { Text(String($0)).tag($0) }
-                }.frame(width:245).disabled(model.connected)
+                }.frame(width:245).disabled(model.connected) }
                 if !model.profile.isM100 {
                     TextField("Address",text:$model.address).textFieldStyle(.roundedBorder).frame(width:75).help("Reader address, usually 0").disabled(model.connected)
                 }
                 Spacer()
                 Button(model.connected ? "Disconnect" : "Connect") { if model.connected { model.disconnect() } else { model.connect() } }
-                    .buttonStyle(.borderedProminent).disabled(model.busy || (!model.connected && model.selectedPort.isEmpty))
+                    .buttonStyle(.borderedProminent).disabled(model.busy || (!model.connected && !model.useCoreS3 && model.selectedPort.isEmpty))
             }.disabled(model.busy)
             if !model.version.isEmpty { Text(model.version).font(.system(size:13,weight:.medium)); Text(model.details).font(.caption).foregroundColor(.secondary) }
             Text("UHF / EPC Gen2 tags use this workspace. NFC and MIFARE cards use HF Workspace.").font(.caption).foregroundColor(.secondary)

@@ -1,0 +1,61 @@
+{
+  "protocol": 1,
+  "name": "Quadband CoreS3",
+  "uuids": {
+    "rx": "82a2c3eb-e3c7-50aa-8701-ed1388a3b3a3",
+    "tx": "37c9a177-5355-5f31-b1e3-808ccf30f92e",
+    "service": "b8878a55-59c6-567c-a112-f35a26093466"
+  },
+  "headerFormat": "<2sBBQIBBHIH",
+  "headerSize": 26,
+  "maxPayload": 2048,
+  "maxFrame": 2078,
+  "maxBuffer": 8312,
+  "kinds": {
+    "request": 0,
+    "response": 1,
+    "event": 2
+  },
+  "channels": {
+    "control": 0,
+    "hf": 1,
+    "uhf": 2,
+    "chameleon": 3
+  },
+  "operations": {
+    "hello": 1,
+    "capabilities": 2,
+    "ping": 3,
+    "cancel": 4,
+    "identify": 16,
+    "classicRead": 17,
+    "classicWrite": 18,
+    "ntagRead": 19,
+    "ntagWrite": 20,
+    "resetAuth": 21,
+    "classicFormat1k": 22,
+    "ntagInitialize": 23,
+    "transact": 32,
+    "peripheralsChanged": 128
+  },
+  "statuses": {
+    "ok": 0,
+    "badFrame": 1,
+    "badVersion": 2,
+    "notAuthorized": 3,
+    "badSession": 4,
+    "unavailable": 5,
+    "staleGeneration": 6,
+    "busy": 7,
+    "timeout": 8,
+    "cancelled": 9,
+    "noCard": 10,
+    "authFailed": 11,
+    "unsupported": 12,
+    "invalidArgument": 13,
+    "ioError": 14,
+    "writeUnverified": 15,
+    "permissionDenied": 16,
+    "staleData": 17
+  }
+}

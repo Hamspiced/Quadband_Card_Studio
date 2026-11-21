@@ -10,6 +10,21 @@ Native SwiftUI on macOS, with a Python/Qt desktop application for Windows and Li
 · `Detailed user guide <docs/USER-GUIDE.txt>`_
 · `Windows/Linux setup <desktop/README.txt>`_
 · `Validation status <docs/VALIDATION.txt>`_
+· `Release automation setup <docs/RELEASING.txt>`_
+
+**Development source:** the CoreS3 reader hub and expanded Classic 4K/NTAG
+workflows below are new source changes, not part of the linked v1.02 release.
+The integrated development versions are desktop 1.1.0, CardputerZero 0.3.0
+and CoreS3 0.4.0; these have not been published as a release.
+See `CoreS3 setup <docs/CORES3.rst>`_ and the
+`bridge protocol <protocol/cores3-bridge-v1.rst>`_.
+
+**CardputerZero development port:** a separate keyboard-first Linux application
+now reuses the standalone HF/NFC, UHF and LF engines. It targets the Zero's
+320x170 display and ships as an arm64 Debian package, not ESP32 firmware.
+See `CardputerZero build, connections and limits <devices/cardputerzero/README.rst>`_.
+Host simulation and cross-build validation do not establish physical reader
+or stock-OS compatibility.
 
 Compatible hardware
 -------------------
@@ -83,6 +98,16 @@ target-system validation. **Physical card writes remain unverified.**
      - USB serial or Nordic UART Bluetooth
      - Supported LF identity scans, password-free T5577 workflows and Classic 1K HF workflows
      - Physical USB identification and limited LF/HF checks confirmed; full HF reads and physical writes unverified. BLE pairing remains platform/firmware dependent.
+   * - M5Stack CoreS3 reader hub
+     - HF, UHF and LF
+     - One paired BLE connection to Card Studio
+     - Exposes detected Grove HF/UHF units and a USB-hosted Chameleon Ultra
+     - Development firmware and simulated integration tests; physical hub operation requires validation.
+   * - M5Stack Unit RFID / RFID2
+     - HF/NFC through CoreS3
+     - Port A I²C; one unit at address 0x28
+     - Known Classic 1K/4K and NTAG213/215/216 user-memory/NDEF workflows
+     - Firmware detects supported MFRC522/WS1850S variants. Unknown layouts remain read-only.
 
 Chameleon Lite is not supported because it lacks the required reader hardware.
 Unrelated HID UHF readers, proprietary reader Bluetooth links and arbitrary
@@ -103,10 +128,16 @@ Supported cards and tags
      - Writes require a second swipe to verify. MSR600 keyboard mode is read-only.
    * - MIFARE Classic 1K
      - NDEF records, 47 ordinary data blocks, local credential profiles and batch data copying
-     - NDEF writes require an already NFC-formatted card. Manufacturer block, keys and sector trailers remain unchanged.
+     - Normal writes preserve manufacturer data, keys and trailers. Explicit canonical formatting is restricted to fully preflighted factory-key/access cards and changes the standard NFC keys/access layout.
    * - Gen1a Magic Classic 1K
      - Normal authenticated Classic 1K data access
      - No backdoor/UID-changing commands; not a full UID/key clone.
+   * - MIFARE Classic 4K
+     - Geometry-aware reads, ordinary data writes, MAD2 NDEF, family-matched profiles and copying
+     - 40 sectors/256 blocks; manufacturer block and every trailer stay protected. Existing valid formatting and keys are required.
+   * - NTAG213 / NTAG215 / NTAG216
+     - Supported PC/SC and Grove HF page reads, guarded user-page writes, NDEF and family-matched profiles
+     - Exact identity, CC, locks and authentication are checked. Only a separately reviewed all-zero CC initialization can change CC; UID, locks, password/PACK and configuration remain protected.
    * - EPC Gen2 / ISO 18000-6C UHF
      - Inventory, EPC/TID/User/Reserved reads, EPC and User-memory write workflows
      - No Reserved/password or TID writes, lock/kill operations or firmware flashing.
@@ -117,8 +148,12 @@ Supported cards and tags
      - Scan and save supported identities when reader firmware provides the format
      - Read/save only in this password-free implementation.
 
-Classic 4K, DESFire and NTAG memory editing are not implemented. Some other
-HF cards can be identified without enabling unsupported memory operations.
+DESFire application-file editing and arbitrary card-management commands are
+not implemented. PC/SC NTAG support requires the reader to return the exact
+supported GET_VERSION response; the selected family is not an identity override.
+Grove HF supports the implemented CoreS3/Zero adapters. Do not assume a
+Chameleon connection supports NTAG or canonical formatting.
+Unrecognized cards can be identified without enabling unsupported writes.
 
 M5Stack / YRM100 adapter setup
 ------------------------------
@@ -152,11 +187,20 @@ Features
   in the sidebar, with UHF first under Contactless.
 * NDEF editor with 19 record types, including text, links, contacts, Wi-Fi,
   Bluetooth, application records, OpenSpool and custom MIME data.
+* Bulk NDEF jobs freeze one to three records and the exact target family.
+  Each target requires observed removal, a fresh Cancel-default review and
+  explicit confirmation. Overwrite and canonical formatting default off.
+  Capacity is checked against serialized bytes and actual target CC/TLVs;
+  an uncertain write stops the job without automatic retry.
 * Local ``.qcard`` data profiles, write-from-file and **Copy to infinity**
   batches with removal detection and per-card results.
 * Staged write review, identity checks, protected-block restrictions and
   read-back verification. Writes are never automatically retried.
 * Local-only card data, explicit exports and session clearing.
+* Development CoreS3 BLE hub with peripheral detection, generation-bound
+  operations, authenticated pairing and family-aware Classic 4K/NTAG data.
+* CoreS3 0.3.0 standalone Grove HF/NFC, UHF inventory/memory/EPC and Ultra LF
+  tools with touch input, RAM source capture, reviewed writes and verification.
 
 Download and run
 ----------------
@@ -170,6 +214,14 @@ ID signed or notarized.
 **Windows / Linux:** follow the `portable setup guide <desktop/README.txt>`_.
 The Python wheel and source distribution require Python and dependencies;
 they are not standalone executables. Native packaging recipes are included.
+
+Future releases containing the release workflow automatically attach tested
+macOS and Windows portable packages, CoreS3 firmware, source and checksums.
+The Windows ZIP includes its executable and required runtime files.
+The CoreS3 browser installer source is included; its
+`hosted page <https://Hamspiced.github.io/Quadband_Card_Studio/>`_ requires the
+one-time Pages setup and successful stable-release deployment described in
+the `release guide <docs/RELEASING.txt>`_. Existing v1.02 downloads are unchanged.
 
 Build and test
 --------------
@@ -188,10 +240,12 @@ are in ``desktop/README.txt``. Generate the full public source archive with:
 
    python3 scripts/source-archive.py
 
-Current local validation: **114 portable tests passed**, with two optional
-hardware checks skipped; **102 native tests passed**, with five optional
-hardware checks skipped. Lint, native serial simulations and light/dark render
-checks passed. These results do not certify physical writes or every target OS.
+Development validation: **284 portable tests passed**, with two optional
+hardware checks skipped; **143 native tests passed**, with five optional
+hardware checks skipped. The CoreS3 application/bootloader/partition artifacts
+compile with pinned ESP-IDF dependencies; shared contract and sanitizer-backed
+firmware host tests pass. These results do not certify physical writes,
+BLE pairing, USB power/OTG interoperability or every target OS.
 See `validation evidence and outstanding checks <docs/VALIDATION.txt>`_.
 
 Credits
@@ -215,6 +269,8 @@ The Midwest Gadgets name and artwork have separate `branding terms <BRANDING.txt
 Third-party dependencies retain their own licenses. No warranty is provided.
 
 * `Detailed user guide and protocol references <docs/USER-GUIDE.txt>`_
+* `CoreS3 firmware and desktop setup <docs/CORES3.rst>`_
+* `CoreS3 bridge wire contract <protocol/cores3-bridge-v1.rst>`_
 * `Windows/Linux setup <desktop/README.txt>`_
 * `Release instructions <docs/RELEASING.txt>`_
 * `Validation status <docs/VALIDATION.txt>`_

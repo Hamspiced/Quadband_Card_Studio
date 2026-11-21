@@ -29,14 +29,14 @@ import Foundation
         _ = try Self.decodeCard(reply.data); return true
     }
     private func requireClassic(_ card: NFCCardInfo) throws {
-        guard card.isClassic1K else { throw StripeError("This HF memory workflow supports MIFARE Classic 1K, including Gen1a in normal authenticated mode. This card can be identified but cannot be written here.") }
+        guard card.family.isClassic else { throw StripeError("This HF memory workflow supports MIFARE Classic 1K/4K, including Gen1a in normal authenticated mode. This card can be identified but cannot be written here.") }
     }
     private func sameCard(_ expected: NFCCardInfo) async throws {
         guard try await identify() == expected else { throw StripeError("The HF card changed. Read the target again before writing.") }
     }
     private func readBlock(_ block: Int, credential: ClassicCredential) async throws -> [UInt8] {
         try require(2008)
-        guard (0..<64).contains(block), credential.bytes.count == 6 else { throw StripeError("Invalid Classic block or key.") }
+        guard (0..<256).contains(block), credential.bytes.count == 6 else { throw StripeError("Invalid Classic block or key.") }
         let reply = try await client.command(2008,[credential.type.code,UInt8(block)]+credential.bytes)
         guard reply.status == 0 else { throw Self.error(reply.status) }
         guard reply.data.count == 16 else { throw StripeError("Incomplete Classic block returned by Chameleon.") }
@@ -44,30 +44,32 @@ import Foundation
     }
     private func writeBlock(_ block: Int, bytes: [UInt8], credential: ClassicCredential, expected: NFCCardInfo) async throws {
         try require(2009)
-        guard ClassicClient.isDataBlock(block), bytes.count == 16, credential.bytes.count == 6 else { throw StripeError("Only 16-byte Classic data blocks may be written. UID and sector trailers are protected.") }
+        guard expected.family.isData(block), bytes.count == 16, credential.bytes.count == 6 else { throw StripeError("Only 16-byte Classic data blocks may be written. UID and sector trailers are protected.") }
         try await sameCard(expected)
+        let trailer = try await readBlock(expected.family.blocks(in:expected.family.sector(of:block)).last!,credential:credential)
+        guard try ClassicAccess.writable(block:block,family:expected.family,trailer:trailer,key:credential.type) else { throw StripeError("Classic access bits prohibit this write.") }
         let reply = try await client.command(2009,[credential.type.code,UInt8(block)]+credential.bytes+bytes)
         guard reply.status == 0, reply.data.isEmpty else { throw Self.error(reply.status) }
         guard try await readBlock(block,credential:credential) == bytes else { throw StripeError("HF block \(block) did not match on read-back.") }
         try await sameCard(expected)
     }
     public func read(key: [UInt8], type: ClassicKeyType, sector: Int? = nil, automatic: Bool = true) async throws -> ClassicSnapshot {
-        guard key.count == 6, sector == nil || (0..<16).contains(sector!) else { throw StripeError("Choose a valid Classic sector and six-byte key.") }
         let card = try await identify(); try requireClassic(card); try require(2008)
+        guard key.count == 6, sector == nil || (0..<card.family.sectorCount).contains(sector!) else { throw StripeError("Choose a valid Classic sector and six-byte key.") }
         let supplied = ClassicCredential(bytes:key,type:type), factory = ClassicCredential(bytes:Array(repeating:255,count:6),type:.a)
         var result = ClassicSnapshot(card:card)
-        for sector in sector.map({ [$0] }) ?? Array(0..<16) {
+        for sector in sector.map({ [$0] }) ?? Array(0..<card.family.sectorCount) {
             try Task.checkCancellation()
-            let standard = ClassicCredential(bytes:sector == 0 ? [0xA0,0xA1,0xA2,0xA3,0xA4,0xA5] : [0xD3,0xF7,0xD3,0xF7,0xD3,0xF7],type:.a)
+            let standard = ClassicCredential(bytes:(sector == 0 || card.family == .classic4k && sector == 16) ? [0xA0,0xA1,0xA2,0xA3,0xA4,0xA5] : [0xD3,0xF7,0xD3,0xF7,0xD3,0xF7],type:.a)
             let candidates = automatic ? (supplied == factory ? [standard,factory] : [supplied,standard,factory]) : [supplied]
             var chosen: ClassicCredential?, failure = "No configured key could read this sector."
             for credential in candidates {
-                do { result.blocks[sector*4] = try await readBlock(sector*4,credential:credential); chosen = credential; break }
+                do { result.blocks[card.family.firstBlock(sector)] = try await readBlock(card.family.firstBlock(sector),credential:credential); chosen = credential; break }
                 catch let error as NFCCommandError { failure = error.localizedDescription }
             }
-            guard let chosen else { for block in sector*4..<sector*4+4 { result.errors[block] = failure }; continue }
+            guard let chosen else { for block in card.family.blocks(in:sector) { result.errors[block] = failure }; continue }
             result.sectorKeys[sector] = chosen
-            for block in sector*4+1..<sector*4+4 {
+            for block in card.family.blocks(in:sector).dropFirst() {
                 do { result.blocks[block] = try await readBlock(block,credential:chosen) }
                 catch let error as NFCCommandError { result.errors[block] = error.localizedDescription }
             }
@@ -76,7 +78,7 @@ import Foundation
     }
     public func write(block: Int, data: [UInt8], key: [UInt8], type: ClassicKeyType, expected: NFCCardInfo, previous: [UInt8]) async throws -> [UInt8] {
         try require(2009); try requireClassic(expected)
-        guard ClassicClient.isDataBlock(block), data.count == 16, previous.count == 16, key.count == 6 else { throw StripeError("Choose a data block and valid 16-byte data. UID and sector trailers cannot be written.") }
+        guard expected.family.isData(block), data.count == 16, previous.count == 16, key.count == 6 else { throw StripeError("Choose a data block and valid 16-byte data. UID and sector trailers cannot be written.") }
         let credential = ClassicCredential(bytes:key,type:type)
         try await sameCard(expected)
         guard try await readBlock(block,credential:credential) == previous else { throw StripeError("This HF block changed since it was read. Read it again before writing.") }
@@ -87,17 +89,23 @@ import Foundation
         try require(2009)
         let blocks = try profile.validatedBlocks()
         let snapshot = try await read(key:key,type:type,automatic:true)
-        guard snapshot.errors.isEmpty, snapshot.blocks.count == 64 else { throw StripeError("Read all target sectors before copying. Check the keys and card placement.") }
+        guard snapshot.errors.isEmpty, snapshot.blocks.count == snapshot.card.family.unitCount else { throw StripeError("Read all target sectors before copying. Check the keys and card placement.") }
+        guard profile.cardFamily == snapshot.card.family else { throw StripeError("Profile family does not match the target.") }
+        for block in blocks.keys {
+            let sector = snapshot.card.family.sector(of:block)
+            guard let trailer = snapshot.blocks[snapshot.card.family.blocks(in:sector).last!], let credential = snapshot.sectorKeys[sector], try ClassicAccess.writable(block:block,family:snapshot.card.family,trailer:trailer,key:credential.type) else { throw StripeError("Target access bits prohibit the copy.") }
+        }
         var verified = 0
         do {
             for block in blocks.keys.sorted() {
-                guard let credential = snapshot.sectorKeys[block/4], let bytes = blocks[block] else { throw StripeError("Missing target key or source data.") }
+                guard let credential = snapshot.sectorKeys[snapshot.card.family.sector(of:block)], let bytes = blocks[block] else { throw StripeError("Missing target key or source data.") }
+                guard try await readBlock(block,credential:credential) == snapshot.blocks[block] else { throw StripeError("Target changed after preflight.") }
                 if snapshot.blocks[block] != bytes { try await writeBlock(block,bytes:bytes,credential:credential,expected:snapshot.card) }
                 else { guard try await readBlock(block,credential:credential) == bytes else { throw StripeError("The card changed during copying.") } }
                 verified += 1
             }
             try await sameCard(snapshot.card); return snapshot.card
-        } catch { throw StripeError("Copy incomplete after verifying \(verified) of 47 data blocks. The target may be partially changed. \(error.localizedDescription)") }
+        } catch { throw StripeError("Copy incomplete after verifying \(verified) of \(blocks.count) data blocks. The target may be partially changed. \(error.localizedDescription)") }
     }
     public func writeNDEF(_ records: [NDEFRecord], expected: ClassicNDEF, key: [UInt8], type: ClassicKeyType) async throws -> ClassicSnapshot {
         try require(2009)
@@ -110,7 +118,7 @@ import Foundation
         let commit = current.lengthPosition/16
         func update(_ index: Int, bytes: [UInt8]) async throws {
             let block = current.blocks[index]
-            guard let credential = snapshot.sectorKeys[block/4] else { throw StripeError("The NFC sector key is unavailable.") }
+            guard let credential = snapshot.sectorKeys[snapshot.card.family.sector(of:block)] else { throw StripeError("The NFC sector key is unavailable.") }
             try await writeBlock(block,bytes:bytes,credential:credential,expected:snapshot.card)
         }
         do {

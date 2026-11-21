@@ -11,10 +11,24 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 DESKTOP = ROOT/'desktop'
+sys.path.insert(0, str(ROOT/'scripts'))
+
+
+def application_version():
+    from release_metadata import application_version as read_version
+    return read_version()
 
 
 def run(*args):
     subprocess.run([str(a) for a in args], cwd=ROOT, check=True)
+
+def package_name(version, system, machine):
+    if system == 'win32':
+        if machine.lower() not in ('amd64', 'x86_64'):
+            raise ValueError('Windows release packaging requires a native x64 runner.')
+        return f'Quadband-Card-Studio-{version}-Windows-x64'
+    label = 'Linux' if system == 'linux' else 'macOS-PORT-SMOKE-ONLY'
+    return f'Quadband-Card-Studio-{version}-{label}-{machine}'
 
 
 def notices(destination):
@@ -38,15 +52,17 @@ def notices(destination):
                     shutil.copyfile(source, target)
     (destination/'dependencies.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
     (destination/'BUILD-INFO.json').write_text(json.dumps({'platform': platform.platform(), 'machine': platform.machine(),
-            'python': sys.version, 'app_version': '1.0.2'}, indent=2), encoding='utf-8')
+            'python': sys.version, 'app_version': application_version()}, indent=2), encoding='utf-8')
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--allow-macos-smoke', action='store_true', help='Developer packaging check only; native Mac app remains the supported Mac build.')
     args = parser.parse_args()
+    version = application_version()
     if sys.platform not in ('win32', 'linux') and not args.allow_macos_smoke:
         parser.error('Build on Windows or Linux. PyInstaller does not cross-compile desktop binaries.')
+    basename = package_name(version, sys.platform, platform.machine())
     if sys.platform == 'win32':
         # Qt writes the .ico from the supplied original image; no extra imaging dependency.
         from PySide6.QtGui import QImage
@@ -63,9 +79,8 @@ def main():
     if sys.platform == 'linux':
         for name in ['70-quadband.rules', 'quadband-card-studio.desktop']:
             shutil.copyfile(DESKTOP/'packaging'/name, destination/name)
-    label = 'Windows' if sys.platform == 'win32' else 'Linux' if sys.platform == 'linux' else 'macOS-PORT-SMOKE-ONLY'
     extension = 'zip' if sys.platform == 'win32' else 'gztar'
-    output = shutil.make_archive(str(DESKTOP/'dist'/f'Quadband-Card-Studio-1.0.2-{label}-{platform.machine()}'),
+    output = shutil.make_archive(str(DESKTOP/'dist'/basename),
                                 extension, root_dir=destination.parent, base_dir=destination.name)
     print(output)
 

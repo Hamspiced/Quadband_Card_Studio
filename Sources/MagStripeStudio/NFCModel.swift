@@ -9,7 +9,19 @@ import MagStripeCore
     @Published var automaticKeys = true
     @Published var ndef: ClassicNDEF?
     @Published var ndefMessage = ""
-    @Published var recordQueue: [NDEFRecord] = []
+    @Published var recordQueue: [NDEFRecord] = [] { didSet { if recordQueue != oldValue { invalidateBulkDraft() } } }
+    @Published var ndefBulk = NDEFBulkState()
+    @Published var bulkFamily = CardFamily.classic1k { didSet { if bulkFamily != oldValue { invalidateBulkDraft() } } }
+    @Published var bulkOverwrite = false { didSet { if bulkOverwrite != oldValue { invalidateBulkDraft() } } }
+    @Published var bulkFormat = false { didSet { if bulkFormat != oldValue { invalidateBulkDraft() } } }
+    @Published var bulkChecking = false
+    var bulkPolling: Task<Void,Never>?
+    var bulkReader = ""
+    var bulkKey = ""
+    var bulkKeyType = ClassicKeyType.a
+    var formattingFamily: (String,CardFamily) -> Bool = { reader,family in
+        !reader.hasPrefix("CoreS3 · ") && !reader.hasPrefix("Chameleon Ultra · ") && (family == .classic1k || family.isNTAG)
+    }
     @Published var readerSettings: ReaderSettingsSnapshot?
     @Published var readerEdits: [String:Int] = [:]
     @Published var readerConfigResults: [ReaderApplyResult] = []
@@ -17,13 +29,13 @@ import MagStripeCore
     let readerConfigService: any ReaderConfigServicing = ReaderConfigService()
     var autoDiscovery = true
     @Published var readers: [String] = []
-    @Published var selectedReader = ""
+    @Published var selectedReader = "" { didSet { if selectedReader != oldValue { invalidateBulkDraft() } } }
     @Published var busy = false
     @Published var writing = false
-    @Published var status = "Connect an ACS reader or Chameleon Ultra, then place your Classic 1K card on it."
+    @Published var status = "Select an ACS, Chameleon or CoreS3 HF reader. Classic 1K/4K and Grove NTAG support depend on its detected capabilities."
     @Published var statusKind = AppModel.StatusKind.neutral
-    @Published var key = "FF FF FF FF FF FF"
-    @Published var keyType = ClassicKeyType.a
+    @Published var key = "FF FF FF FF FF FF" { didSet { if key != oldValue { invalidateBulkDraft() } } }
+    @Published var keyType = ClassicKeyType.a { didSet { if keyType != oldValue { invalidateBulkDraft() } } }
     @Published var allSectors = true
     @Published var selectedSector = 0
     @Published var selectedBlock = 1
@@ -37,6 +49,31 @@ import MagStripeCore
     @Published var copiesSucceeded = 0
     @Published var copiesFailed = 0
     var snapshotReader = ""
+    var requiresExplicitReaderSelection = false
+    var writableFamily: (String,CardFamily) -> Bool = { _,family in family.isClassic }
+    var family: CardFamily { snapshot?.card.family ?? .classic1k }
+    var unitSize: Int { family.unitSize }
+    var unitLabel: String { family.isNTAG ? "page" : "block" }
+    var memoryGroups: Range<Int> { 0..<(family.isNTAG ? (family.unitCount + 15) / 16 : family.sectorCount) }
+    func units(in group: Int) -> Range<Int> {
+        family.isNTAG ? min(group*16,family.unitCount)..<min(group*16+16,family.unitCount) : family.blocks(in:group)
+    }
+    var selectedUnits: Range<Int> { units(in:selectedSector) }
+    var dataUnitSelected: Bool { family.isData(selectedBlock) }
+    var selectedPermissionAllowsWrite: Bool { selectedWriteRestriction == nil }
+    var selectedWriteRestriction: String? {
+        guard let snapshot, dataUnitSelected else { return "Choose a read data unit before writing." }
+        guard writableFamily(selectedReader,family) else { return "The selected reader does not advertise writing for this family." }
+        if family.isNTAG {
+            do { try NTAGPermissions(family:family,pages:snapshot.blocks).requireWritable(selectedBlock,authenticated:snapshot.ntagAuthenticated); return nil }
+            catch { return error.localizedDescription }
+        }
+        let sector = family.sector(of:selectedBlock)
+        guard let trailer = snapshot.blocks[family.blocks(in:sector).last ?? -1] else { return "Read this sector's permissions before writing." }
+        do {
+            return try ClassicAccess.writable(block:selectedBlock,family:family,trailer:trailer,key:automaticKeys ? snapshot.sectorKeys[sector]?.type ?? keyType : keyType) ? nil : "Classic access bits prohibit writing with this key."
+        } catch { return error.localizedDescription }
+    }
     let service: any NFCServicing
     let pollingInterval: UInt64
     init(service: any NFCServicing = NFCService(), pollingInterval: UInt64 = 300_000_000) {
@@ -49,12 +86,12 @@ import MagStripeCore
     var operation: Task<Void, Never>?
 
     var draftError: String? {
-        do { _ = try HexBytes.parse(draft, count: 16); _ = try HexBytes.parse(key, count: 6); return nil }
+        do { _ = try HexBytes.parse(draft, count: unitSize); if !family.isNTAG { _ = try HexBytes.parse(key, count: 6) }; return nil }
         catch { return error.localizedDescription }
     }
     var canWrite: Bool {
-        !busy && !selectedReader.isEmpty && snapshotReader == selectedReader && snapshot?.card.isClassic1K == true &&
-            snapshot?.blocks[selectedBlock] != nil && ClassicClient.isDataBlock(selectedBlock) && draftError == nil
+        !busy && !selectedReader.isEmpty && snapshotReader == selectedReader && writableFamily(selectedReader,family) &&
+            snapshot?.blocks[selectedBlock] != nil && selectedPermissionAllowsWrite && draftError == nil
     }
     func refresh() {
         guard !busy else { return }
@@ -63,19 +100,24 @@ import MagStripeCore
             defer { busy = false; operation = nil }
             do {
                 readers = try await service.readers()
-                if !readers.contains(selectedReader) { selectedReader = readers.first(where: ReaderFamily.isContactless) ?? readers.first ?? ""; readerChanged() }
+                if !readers.contains(selectedReader) {
+                    let wasBridge = selectedReader.hasPrefix("CoreS3 · ")
+                    selectedReader = wasBridge || requiresExplicitReaderSelection ? "" : readers.first(where: { !$0.hasPrefix("CoreS3 · ") && ReaderFamily.isContactless($0) }) ?? readers.first(where: { !$0.hasPrefix("CoreS3 · ") }) ?? ""
+                    readerChanged()
+                }
                 status = readers.isEmpty ? "No HF reader found. Connect an ACS reader, or connect your Chameleon in LF Workspace, then refresh." : "Reader found. Place a card on it, then choose Read card."
                 statusKind = .neutral
             } catch { failed(error) }
         }
     }
     func readerChanged() {
+        if ndefBulk.phase != .stopped { stopNDEFBulk() }
         ndef = nil; ndefMessage = ""; snapshot = nil; snapshotReader = ""; draft = ""
         if readerSettings?.reader != selectedReader { readerSettings = nil; readerEdits = [:]; readerConfigResults = []; readerConfigPreview = false }
     }
     func selectSector(_ sector: Int) {
         selectedSector = sector
-        selectBlock(sector == 0 ? 1 : sector * 4)
+        selectBlock(family.isNTAG ? min(max(4,sector*16),family.unitCount-1) : sector == 0 ? 1 : family.firstBlock(sector))
     }
     func selectBlock(_ block: Int) {
         selectedBlock = block
@@ -84,7 +126,7 @@ import MagStripeCore
     func read(identifyOnly: Bool = false, forProfile: Bool = false) {
         guard !busy, !selectedReader.isEmpty else { return }
         let keyBytes: [UInt8]
-        do { keyBytes = identifyOnly ? [] : try HexBytes.parse(key, count: 6) }
+        do { keyBytes = identifyOnly ? [] : selectedReader.hasPrefix("CoreS3 · ") ? (try? HexBytes.parse(key,count:6)) ?? [] : try HexBytes.parse(key, count: 6) }
         catch { failed(error); return }
         let reader = selectedReader, type = keyType, sector = (allSectors || forProfile) ? nil : selectedSector
         if forProfile { profile = nil; profileOrigin = "" }
@@ -99,6 +141,8 @@ import MagStripeCore
                 else { result = try await service.read(reader: reader, key: keyBytes, type: type, sector: sector) }
                 try Task.checkCancellation()
                 snapshot = result; snapshotReader = reader
+                if !memoryGroups.contains(selectedSector) { selectedSector = 0 }
+                if !(0..<family.unitCount).contains(selectedBlock) { selectedBlock = family.isNTAG ? 4 : 1 }
                 selectBlock(selectedBlock)
                 inspectRecords(result)
                 if forProfile {
@@ -109,7 +153,7 @@ import MagStripeCore
                     status = "Card identified: \(result.card.name)."; statusKind = .success
                 } else {
                     if let ndef { status = "Read complete — \(ndef.records.count) NFC record\(ndef.records.count == 1 ? "" : "s")."; statusKind = .success; return }
-                    status = "Read \(result.blocks.count) blocks" + (result.errors.isEmpty ? "." : "; \(result.errors.count) could not be read. Check the selected key and access permissions.")
+                    status = "Read \(result.blocks.count) \(family.isNTAG ? "pages" : "blocks")" + (result.errors.isEmpty ? "." : "; \(result.errors.count) could not be read. Check the selected key and access permissions.")
                     statusKind = result.errors.isEmpty ? .success : .error
                 }
             } catch { failed(error) }
@@ -118,11 +162,11 @@ import MagStripeCore
     func write() {
         guard canWrite, let snapshot, let previous = snapshot.blocks[selectedBlock] else { return }
         let bytes: [UInt8], keyBytes: [UInt8]
-        do { bytes = try HexBytes.parse(draft, count: 16); keyBytes = try (automaticKeys ? snapshot.sectorKeys[selectedBlock / 4]?.bytes : nil) ?? HexBytes.parse(key, count: 6) }
+        do { bytes = try HexBytes.parse(draft, count: unitSize); keyBytes = family.isNTAG ? [] : try (automaticKeys ? snapshot.sectorKeys[family.sector(of:selectedBlock)]?.bytes : nil) ?? HexBytes.parse(key, count: 6) }
         catch { failed(error); return }
-        let reader = selectedReader, block = selectedBlock, type = (automaticKeys ? snapshot.sectorKeys[selectedBlock / 4]?.type : nil) ?? keyType
+        let reader = selectedReader, block = selectedBlock, type = (automaticKeys ? snapshot.sectorKeys[family.sector(of:selectedBlock)]?.type : nil) ?? keyType
         busy = true; writing = true; statusKind = .working
-        status = "Writing block \(block) and verifying. Keep the card on the reader…"
+        status = "Writing \(unitLabel) \(block) and verifying. Keep the card on the reader…"
         operation = Task {
             defer { busy = false; writing = false; operation = nil }
             do {
@@ -131,7 +175,7 @@ import MagStripeCore
                 self.snapshot?.blocks[block] = verified
                 if let updated = self.snapshot { inspectRecords(updated) }
                 draft = HexBytes.string(verified)
-                status = "Verified — block \(block) matches all 16 requested bytes."; statusKind = .success
+                status = "Verified — \(unitLabel) \(block) matches all \(verified.count) requested bytes."; statusKind = .success
             } catch {
                 readerChanged()
                 failed(error)
@@ -139,6 +183,7 @@ import MagStripeCore
         }
     }
     func cancel() {
+        if ndefBulk.phase != .stopped { stopNDEFBulk(); return }
         guard !writing || batchRunning else { return }
         operation?.cancel()
         status = "Stopping NFC read…"

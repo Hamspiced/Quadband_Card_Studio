@@ -4,7 +4,8 @@ import AppKit
 import MagStripeCore
 
 @MainActor final class LFModel: ObservableObject {
-    enum Link: String, CaseIterable { case usb = "USB", bluetooth = "Bluetooth" }
+    enum Link: String, CaseIterable { case usb = "USB", bluetooth = "Bluetooth", cores3 = "CoreS3" }
+    weak var hub: CoreS3Hub?
     @Published var link = Link.usb
     @Published var ports: [SerialDevice] = []
     @Published var selectedPort = ""
@@ -24,6 +25,7 @@ import MagStripeCore
     @Published var log: [String] = []
     var autoDiscovery = true
     private var connection: ChameleonConnection?
+    private var bridgeConnection: CoreS3ChameleonTransport?
     private var client: ChameleonClient?
     private var operation: Task<Void,Never>?
     private var generation = UUID()
@@ -36,11 +38,40 @@ import MagStripeCore
         ports = SerialDevice.scan()
         if !ports.contains(where: { $0.path == selectedPort }) { selectedPort = ports.first(where: { $0.name.localizedCaseInsensitiveContains("chameleon") || $0.vendor == 0x6868 })?.path ?? ports.first?.path ?? "" }
     }
+    func releaseBridgeNormally() async {
+        guard link == .cores3, connected, !busy, !hfWorkflowBusy, let client, let bridgeConnection else { return }
+        do {
+            try bridgeConnection.begin(); defer { bridgeConnection.end() }
+            try await client.restoreMode()
+        } catch { note("Previous USB Chameleon mode could not be restored. \(error.localizedDescription)",.error) }
+        close()
+    }
+    private func connectBridge() {
+        guard let session = hub?.session,
+              let slot = session.capabilities?.peripherals.first(where: { $0.channel == 3 && $0.present && $0.kind == "chameleon" && $0.capabilities.contains("chameleon") }) else { note("Connect the CoreS3 hub and attach its detected, supported USB Chameleon first.",.error); return }
+        bridgeConnection?.close(); bridgeConnection = nil
+        run("Identifying the CoreS3 USB Chameleon…") { [self] in
+            let transport = CoreS3ChameleonTransport(session:session,generation:slot.generation)
+            self.bridgeConnection = transport
+            transport.onDisconnect = { [weak self] error in
+                self?.connected = false; self?.preview = nil; self?.connectionIdentity = UUID()
+                self?.bridgeConnection = nil; self?.client = nil; self?.info = nil; self?.note(error.localizedDescription,.error)
+            }
+            do {
+                try transport.begin(); defer { transport.end() }
+                let client = ChameleonClient(transport:transport)
+                self.info = try await client.identify(); self.client = client; self.connected = true
+                self.note("USB Chameleon identified through CoreS3. HF/LF share one exclusive lease.",.success)
+            } catch { transport.close(); self.bridgeConnection = nil; self.info = nil; self.client = nil; throw error }
+        }
+    }
     func note(_ text: String, _ kind: AppModel.StatusKind = .neutral) {
         status = text; statusKind = kind; log.insert("\(Date().formatted(date:.omitted,time:.standard))  \(text)",at:0); log = Array(log.prefix(60))
     }
     func connect() {
         guard !busy && !hfWorkflowBusy && !connected else { return }
+        if link == .cores3 { connectBridge(); return }
+        bridgeConnection?.close(); bridgeConnection = nil
         let link = link, port = selectedPort, id = selectedBluetooth
         run("Connecting to Chameleon over \(link.rawValue)…") {
             let value: ChameleonConnection
@@ -75,7 +106,7 @@ import MagStripeCore
         }
     }
     func close() {
-        connectionIdentity = UUID(); connection?.close(); connection = nil; client = nil; bluetooth.close(); connected = false; info = nil; preview = nil
+        connectionIdentity = UUID(); connection?.close(); connection = nil; bridgeConnection?.close(); bridgeConnection = nil; client = nil; bluetooth.close(); connected = false; info = nil; preview = nil
     }
     func cancel() {
         generation = UUID(); operation?.cancel(); operation = nil; close(); busy = false
@@ -132,6 +163,8 @@ import MagStripeCore
     func withHF<T>(_ work: @escaping @MainActor (ChameleonHFClient) async throws -> T) async throws -> T {
         guard connected && !busy, let client else { throw StripeError("Chameleon is busy or disconnected. Finish the current operation before using HF Workspace.") }
         busy = true; preview = nil; let token = generation
+        do { try bridgeConnection?.begin() } catch { busy = false; throw error }
+        defer { bridgeConnection?.end() }
         note("Chameleon is in use by HF Workspace…",.working)
         defer { if generation == token { busy = false } }
         do {
@@ -143,7 +176,12 @@ import MagStripeCore
         guard !busy else { return }; busy = true; note(text,.working)
         let token = generation
         operation = Task { [self] in
-            do { try await work() } catch { if token == generation { note(error.localizedDescription,.error) } }
+            let bridge = bridgeConnection
+            do {
+                try bridge?.begin()
+                defer { bridge?.end() }
+                try await work()
+            } catch { if token == generation { note(error.localizedDescription,.error) } }
             if token == generation { busy = false; operation = nil }
         }
     }

@@ -1,15 +1,36 @@
 # Preparing a public release
 
-The source archive produced by `python scripts/source-archive.py` is the publishable repository tree. Extract it and create a repository from that folder. The archive includes the native Mac application, portable Windows/Linux application, tests, resources, build scripts, CI, GPLv3 and branding/third-party terms. `SOURCE-MANIFEST.sha256` records every included file. No GitHub repository or public release is created automatically by this project.
+The source archive produced by `python scripts/source-archive.py` is the publishable repository tree. The archive includes the native Mac application, portable Windows/Linux application, CoreS3 firmware/browser installer, tests, resources, build scripts, CI, GPLv3 and branding/third-party terms. `SOURCE-MANIFEST.sha256` records every included file. Pushing source does not create a GitHub release.
 
 Do **not** upload the entire local working directory without inspecting ignored files. `.build/`, `dist/`, environments, local card files and the unknown-license supplied RF reference script are excluded. All original Quadband source is included. Default Mac builds omit the private script and hide its export button. Independent ACS controls and the discussion link remain available.
 
-1. Run the tests and native builds on the target systems. The workflow runs automatically after the source tree is pushed and provides Windows, Linux, Mac and source artifacts in the Actions run. It does not publish a release or modify cards.
+1. Run the tests and native builds on the target systems. The build workflow runs after source pushes and pull requests and provides Windows, Linux, Mac, firmware and source artifacts in Actions. These events do not publish releases or modify devices.
 2. Run the reader validation matrix in `VALIDATION.txt` on Windows and Linux. Test writes only against intended expendable targets. Record failures and firmware differences. Do not label untested paths as hardware-verified.
 3. Review `dependencies.json` and the bundled license/notice directories. For binary distribution, supply the required corresponding dependency source and any LGPL relinking materials. Match the versions actually bundled: obtain Python source, matching PySide/Shiboken and Qt source archives (including bundled Qt third-party sources), and source distributions for hidapi, pyscard, Bleak and platform dependencies. Publish those alongside the binaries or use another license-compliant provision method. PySide source archives: https://download.qt.io/official_releases/QtForPython/pyside6/ . Qt source archives: https://download.qt.io/official_releases/qt/ . The application's embedded source archive alone does not cover third-party library obligations.
-4. Attach the full source archive and native artifacts to a release. The native Mac zip includes the app source archive; Windows/Linux directory packages also include it. Python wheels are installable with Python, not standalone executables.
+4. Publish a GitHub release from an immutable version tag containing the release tooling. The release workflow rebuilds the exact tagged commit, waits for its required checks/builds, and attaches versioned native/source/firmware downloads and SHA-256 checksums. The native Mac ZIP includes the application source archive; the Windows portable ZIP contains QuadbandCardStudio.exe plus its required runtime directory and source. Do not distribute the bare EXE without the runtime. Python wheels are installable with Python, not standalone executables.
 5. Optional public signing: sign/notarize the Mac app with your Developer ID and sign Windows executables with your publisher certificate. Credentials must stay in private CI secrets; none are included. Linux packages need no signing to run but release checksums/signatures are useful.
 
-Versioning: the current release is 1.0.2. Update `desktop/pyproject.toml`, `desktop/src/quadband/__init__.py`, `Resources/Info.plist`, archive/build labels and validation notes together. Binaries built by PyInstaller are OS/architecture specific. Build Linux on the oldest supported distribution; the present workflow targets Ubuntu 24.04. Keep the full runtime folder with the executable.
+Versioning: the current application version is 1.0.2. Update `desktop/pyproject.toml`, `desktop/src/quadband/__init__.py`, `Resources/Info.plist` and validation notes together before creating the next version tag. Packaging filenames read the validated version instead of requiring manual label changes. Historical v1.01 and v1.02 map explicitly to 1.0.1 and 1.0.2; use vX.Y.Z for future stable tags. CoreS3 firmware has its own version and is not renamed to match the desktop application.
+
+The workflow supports a manual rerun for an existing published release tag. Reruns replace only workflow-managed downloads and preserve unrelated assets and user-authored release notes. Draft releases are not published automatically. Existing historical releases are not modified as part of implementing this automation; tags predating the tooling cannot gain new source/features merely by rerunning CI.
+
+Release builds use native macOS and Windows runners. PyInstaller does not cross-compile Windows executables on a Mac. Binaries remain OS/architecture-specific; Linux CI targets Ubuntu 24.04. GitHub Actions success establishes automated build/smoke checks, not physical reader compatibility.
 
 The native Mac build is ad-hoc signed for local use. Build artifacts are release candidates until native target-system tests, dependency-source provision and optional signing are complete.
+
+## CoreS3 browser installer hosting
+
+The browser installer is built from webflasher/ and hosted with the matching verified split firmware on GitHub Pages. The default project URL is https://Hamspiced.github.io/Quadband_Card_Studio/ . That URL becomes available only after the repository hosting setup and a successful stable-release deployment.
+
+One-time repository setup:
+
+- Open repository Settings, Pages, then choose GitHub Actions as the build/deployment source.
+- Review the github-pages environment protection rules so the intended release workflow refs may deploy. Keep the environment and Pages permissions limited to trusted release code.
+- Ensure Actions is enabled. Builds use read-only repository access; only release asset publication gets contents: write, and only Pages deployment gets pages: write and id-token: write. No personal access token is required.
+- Commit and push the implementation only when ready, then publish a new versioned release. This setup document itself does not change repository settings or publish anything.
+
+Only a successfully built/published stable release may update the hosted installer. Prerelease downloads do not silently replace stable firmware, and rerunning an older release must not roll the site back. The website and all split images are deployed together, avoiding release-download cross-origin requirements. Generated binaries, node_modules and build outputs are not committed into the source tree.
+
+The catalog records application release, firmware version, source commit, exact image offsets/sizes and SHA-256 digests. Local --allow-dirty exports are visibly marked development snapshots and rejected by release Pages staging. No live browser/device flash is an automated CI test.
+
+See CORES3.rst for browser compatibility, settings preservation and USB power precautions.

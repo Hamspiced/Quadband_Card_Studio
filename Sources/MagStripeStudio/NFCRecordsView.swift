@@ -15,16 +15,18 @@ struct NFCRecordsReadView: View {
                         Image(systemName: "wave.3.right.circle.fill").font(.system(size: 32)).foregroundColor(hfAccent)
                         VStack(alignment: .leading, spacing: 5) {
                             Text(snapshot.card.name).font(.system(size: 19, weight: .semibold))
-                            Text(snapshot.card.isClassic1K ? (model.ndef == nil ? "NFC-A · MIFARE Classic" : "NFC-A · MIFARE Classic · NDEF") : "Card identification only").font(.system(size: 12)).foregroundColor(.secondary)
+                            Text(snapshot.card.family != .unknown ? (model.ndef == nil ? "NFC-A · \(snapshot.card.family.isNTAG ? "Type 2" : "MIFARE Classic")" : "NFC-A · NDEF") : "Card identification only").font(.system(size: 12)).foregroundColor(.secondary)
                         }
                         Spacer()
                     }
                     Grid(alignment: .leading, horizontalSpacing: 30, verticalSpacing: 12) {
                         GridRow { Text("Card ID").foregroundColor(.secondary); Text(HexBytes.string(snapshot.card.uid)).textSelection(.enabled) }
-                        if snapshot.card.isClassic1K { GridRow { Text("Memory").foregroundColor(.secondary); Text("1 KB · 16 sectors") } }
+                        if snapshot.card.family != .unknown {
+                            GridRow { Text("Memory").foregroundColor(.secondary); Text("\(snapshot.card.family.unitCount * snapshot.card.family.unitSize) bytes · \(snapshot.card.family.unitCount) \(snapshot.card.family.isNTAG ? "pages" : "blocks")") }
+                        }
                         if let ndef = model.ndef {
                             GridRow { Text("Record size").foregroundColor(.secondary); Text("\(ndef.messageSize) / \(ndef.capacity) bytes") }
-                            GridRow { Text("Writable").foregroundColor(.secondary); Text(ndef.writable ? "Yes" : "Not with the available key") }
+                            GridRow { Text("Writable").foregroundColor(.secondary); Text(ndef.writable && model.writableFamily(model.selectedReader,ndef.card.family) ? "Yes" : "Not with the available reader, credential or permissions") }
                         }
                     }.font(.system(size: 12))
                 }.padding(22).frame(maxWidth: .infinity, alignment: .leading).background(AppTheme.surface).cornerRadius(12)
@@ -117,6 +119,7 @@ struct NFCRecordsWriteView: View {
                 Button("Write records & verify") { model.writeRecords() }.buttonStyle(.borderedProminent).controlSize(.large)
                     .disabled(model.busy || model.recordWriteError != nil)
             }.padding(20).background(AppTheme.surface).cornerRadius(12)
+            NDEFBulkControls(model:model)
         }
         .sheet(item: $editor) { request in
             NFCRecordEditor(record: request.record) { record in
@@ -124,6 +127,72 @@ struct NFCRecordsWriteView: View {
                 else { model.recordQueue.append(record) }
             }
         }
+    }
+}
+
+private struct NDEFBulkControls: View {
+    @ObservedObject var model: NFCModel
+    @State private var reviewPresented = false
+    var body: some View {
+        VStack(alignment:.leading,spacing:12) {
+            Text("Bulk NDEF encoding").font(.headline)
+            Text("Freeze 1–3 records. Each target requires removal, a fresh read and explicit confirmation. This is not the data-copy batch.").font(.caption).foregroundColor(.secondary)
+            HStack {
+                Picker("Exact target family",selection:$model.bulkFamily) {
+                    ForEach(NDEFBulkJob.families,id:\.self) { Text($0.rawValue).tag($0) }
+                }
+                Toggle("Allow overwrite",isOn:$model.bulkOverwrite)
+                Toggle("Allow canonical formatting",isOn:$model.bulkFormat)
+            }.disabled(model.busy)
+            Text("Formatting changes factory keys/access settings on Classic1K, or initializes an all-zero NTAG CC. It is never a repair operation.").font(.caption).foregroundColor(.secondary)
+            if let job = model.ndefBulk.job {
+                Text("Frozen: \(job.records.count) records · \(job.encodedBytes) bytes · \(job.family.rawValue) · canonical capacity \(job.canonicalCapacity)")
+            } else if let job = try? NDEFBulkJob(records:model.recordQueue,family:model.bulkFamily) {
+                Text("\(job.encodedBytes) encoded bytes / \(job.canonicalCapacity) canonical capacity (actual target rechecked)")
+            }
+            Text("Verified \(model.ndefBulk.succeeded) · already correct \(model.ndefBulk.alreadyCorrect) · failed/unverified \(model.ndefBulk.failed)").font(.caption)
+            HStack {
+                Button("Arm frozen bulk job") { model.armNDEFBulk() }
+                    .disabled(model.busy || model.bulkDraftError != nil || model.ndefBulk.phase == .unverified)
+                Button("Review target") { reviewPresented = true }
+                    .disabled(model.ndefBulk.phase != .review || model.bulkChecking)
+                Button("Stop bulk") { model.stopNDEFBulk() }
+                    .disabled(model.ndefBulk.phase == .stopped)
+            }
+            Text(model.ndefBulk.phase == .unverified ? "Unverified target latch: inspect separately. Restart the NFC workspace before a new bulk job." : model.bulkDraftError ?? "Armed options and records are immutable until Stop.").font(.caption)
+        }.padding(20).background(AppTheme.surface).cornerRadius(12)
+        .sheet(isPresented:$reviewPresented) {
+            if let review = model.ndefBulk.review, let job = model.ndefBulk.job {
+                NDEFBulkTargetReview(model:model,review:review,job:job,generation:model.ndefBulk.generation)
+            } else {
+                VStack { Text("Target review expired."); Button("Cancel") { reviewPresented = false }.keyboardShortcut(.defaultAction) }.padding(30)
+            }
+        }
+    }
+}
+
+private struct NDEFBulkTargetReview: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var model: NFCModel
+    let review: NDEFBulkReview
+    let job: NDEFBulkJob
+    let generation: UUID
+    var body: some View {
+        VStack(alignment:.leading,spacing:16) {
+            Text("Confirm this target only").font(.title2)
+            Text("\(review.snapshot.card.name) · \(HexBytes.string(review.snapshot.card.uid))")
+            Text("\(job.records.count) frozen records · \(job.encodedBytes) encoded bytes")
+            Text("Overwrite \(job.overwrite ? "authorized" : "disabled") · \(review.requiresFormat ? "CANONICAL FORMATTING REQUIRED — factory keys/access or blank CC will change" : "existing formatting preserved")")
+            ForEach(Array(job.records.enumerated()),id:\.offset) { index,record in Text("\(index+1). \(record.displayValue)").lineLimit(3) }
+            Text(review.alreadyCorrect ? "Already correct; confirmation revalidates without writing." : "Confirm sends one guarded operation. No automatic retries.")
+            HStack {
+                Spacer()
+                Button("Cancel") { model.stopNDEFBulk(); dismiss() }.keyboardShortcut(.defaultAction)
+                Button(review.alreadyCorrect ? "Confirm verification" : "Confirm target write") {
+                    model.confirmNDEFBulk(review.id,generation:generation); dismiss()
+                }.disabled(model.bulkChecking || model.ndefBulk.review?.id != review.id || model.ndefBulk.generation != generation)
+            }
+        }.padding(28).frame(width:560)
     }
 }
 

@@ -6,6 +6,7 @@ extension NFCModel {
     var recordBytes: Int { (try? NDEFCodec.encode(recordQueue).count) ?? 0 }
     var recordWriteError: String? {
         guard let ndef else { return "Read an NFC-formatted card before writing records." }
+        guard writableFamily(selectedReader,ndef.card.family) else { return "The selected reader does not advertise writing for this family." }
         guard ndef.writable else { return "The card is read-only with the available key." }
         do { _ = try ndef.replacing(with: recordQueue); return nil }
         catch { return error.localizedDescription }
@@ -22,7 +23,7 @@ extension NFCModel {
     func writeRecords() {
         guard !busy, !selectedReader.isEmpty, let expected = ndef, recordWriteError == nil else { return }
         let keyBytes: [UInt8]
-        do { keyBytes = try HexBytes.parse(key, count: 6) } catch { failed(error); return }
+        do { keyBytes = expected.card.family.isNTAG ? [] : try HexBytes.parse(key, count: 6) } catch { failed(error); return }
         let records = recordQueue, reader = selectedReader, type = keyType
         busy = true; writing = true; statusKind = .working
         status = "Writing NFC records and verifying. Keep the card on the reader…"

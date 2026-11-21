@@ -61,7 +61,10 @@ final class NFCProtocolTests: XCTestCase {
         let client = ClassicClient(transport: device)
         let info = try client.identify(), before = device.memory
         XCTAssertEqual(try client.write(block: 4, data: data, key: key, type: .a, expectedCard: info, previous: before[4]!), data)
-        XCTAssertEqual(device.commands.suffix(2).map { $0 }, [[0xFF,0xD6,0,4,16] + data,[0xFF,0xB0,0,4,16]])
+        XCTAssertEqual(device.commands.suffix(4).map { $0 }, [
+            [0xFF,0xCA,0,0,0], [0xFF,0xD6,0,4,16] + data,
+            [0xFF,0xB0,0,4,16], [0xFF,0xCA,0,0,0]
+        ])
         for block in 0..<64 where block != 4 { XCTAssertEqual(device.memory[block], before[block]) }
     }
     func testUnsafeOrStaleWritesNeverSendUpdateCommand() throws {
@@ -112,6 +115,7 @@ final class NFCProtocolTests: XCTestCase {
         let profile = try CardCredentials(snapshot: ClassicClient(transport: source).read(key: key, type: .a))
         target.uid = [9,8,7,6]
         target.memory = Dictionary(uniqueKeysWithValues: (0..<64).map { ($0, Array(repeating: UInt8(0xAA), count: 16)) })
+        target.installWritableTrailers()
         let original = target.memory
         let result = try ClassicClient(transport: target).writeProfile(profile, key: key, type: .a)
         XCTAssertEqual(result.uid, [9,8,7,6])
@@ -133,6 +137,7 @@ final class NFCProtocolTests: XCTestCase {
         let profile = try CardCredentials(snapshot: ClassicClient(transport: source).read(key: key, type: .a))
         target.memory = Dictionary(uniqueKeysWithValues: (0..<64).map { ($0, Array(repeating: UInt8(0xAA), count: 16)) })
         target.rejectWriteBlock = 8
+        target.installWritableTrailers()
         XCTAssertThrowsError(try ClassicClient(transport: target).writeProfile(profile, key: key, type: .a)) { error in
             XCTAssertTrue(error.localizedDescription.contains("verifying 5 of 47"))
         }
@@ -141,6 +146,13 @@ final class NFCProtocolTests: XCTestCase {
     func testTruncatedOrShortRepliesDoNotBecomeCardData() throws {
         let device = NFCFake(); device.shortRead = true
         XCTAssertThrowsError(try ClassicClient(transport: device).read(key: key, type: .a, sector: 0))
+    }
+    func testProfilePermissionFailureBeforeAnyWrite() throws {
+        let source = NFCFake(), target = NFCFake()
+        let profile = try CardCredentials(snapshot:ClassicClient(transport:source).read(key:key,type:.a))
+        target.memory[63] = Array(repeating:0,count:16)
+        XCTAssertThrowsError(try ClassicClient(transport:target).writeProfile(profile,key:key,type:.a))
+        XCTAssertFalse(target.commands.contains { $0[1] == 0xD6 })
     }
 }
 
@@ -152,6 +164,10 @@ private final class NFCFake: NFCTransport {
     var deniedSectors: Set<Int> = []
     var rejectWriteBlock: Int?
     var rejectWrite = false, ignoreWrite = false, shortRead = false
+    init() { installWritableTrailers() }
+    func installWritableTrailers() {
+        for sector in 0..<16 { memory[sector*4+3] = Array(repeating:255,count:6) + [0xFF,0x07,0x80,0x69] + Array(repeating:255,count:6) }
+    }
     func transmit(_ bytes: [UInt8]) throws -> [UInt8] {
         commands.append(bytes)
         switch bytes[1] {

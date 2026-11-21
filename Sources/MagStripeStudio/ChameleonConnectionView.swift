@@ -20,7 +20,7 @@ struct ChameleonConnectionView: View {
                     Text("Choose Chameleon port").tag("")
                     ForEach(model.ports) { Text($0.label).tag($0.path) }
                 }.labelsHidden().disabled(locked)
-            } else {
+            } else if model.link == .bluetooth {
                 Picker("Chameleon Bluetooth device", selection: $model.selectedBluetooth) {
                     Text("Choose Chameleon").tag(nil as UUID?)
                     ForEach(bluetooth.devices) { Text($0.name).tag(Optional($0.id)) }
@@ -33,11 +33,11 @@ struct ChameleonConnectionView: View {
             HStack {
                 Button(model.connected ? "Disconnect" : "Connect") {
                     if model.connected { model.disconnect() } else { model.connect() }
-                }.disabled(model.busy || model.hfWorkflowBusy || (!model.connected && (model.link == .usb ? model.selectedPort.isEmpty : model.selectedBluetooth == nil)))
+                }.disabled(model.busy || model.hfWorkflowBusy || (!model.connected && (model.link == .usb ? model.selectedPort.isEmpty : model.link == .bluetooth && model.selectedBluetooth == nil)))
                 if model.link == .usb {
                     Button { model.refresh() } label: { Image(systemName: "arrow.clockwise") }
                         .help("Refresh Chameleon USB devices").disabled(locked)
-                } else {
+                } else if model.link == .bluetooth {
                     Button(bluetooth.scanning ? "Stop" : "Scan") {
                         if bluetooth.scanning { bluetooth.stop() } else { bluetooth.scan() }
                     }.disabled(locked)

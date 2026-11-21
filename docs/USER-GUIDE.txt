@@ -1,5 +1,7 @@
 # Quadband Card Studio by Midwest Gadgets
 Detailed user guide. Paths and commands below are relative to the repository root.
+This guide describes the v1.02 baseline. For the newer CoreS3 development firmware,
+Classic 4K and NTAG bridge workflows, see docs/CORES3.rst.
 
 **Version 1.0.2 — macOS, Windows and Linux source. GPL-3.0-only.**
 

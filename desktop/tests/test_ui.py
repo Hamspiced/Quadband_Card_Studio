@@ -14,6 +14,8 @@ def app():
 def window(app, tmp_path):
     w = MainWindow(settings=QSettings(str(tmp_path / 'appearance.ini'), QSettings.Format.IniFormat))
     yield w
+    import asyncio
+    asyncio.run_coroutine_threadsafe(w.service.close(), w.worker.loop).result(timeout=3)
     w.worker.loop.call_soon_threadsafe(w.worker.loop.stop)
     assert w.worker.wait(3000)
     w.closed_ready = True
@@ -78,6 +80,32 @@ def test_sidebar_connections_disabled_during_operations(window, monkeypatch):
     assert window.connection_panel.isEnabled()
 
 
+@pytest.mark.parametrize('mode,pending', [('home', False), ('standalone', False), ('connected', True)])
+def test_bridge_modes_remove_readers_and_clear_authentication(window, mode, pending):
+    import copy
+    from quadband import cores3
+    from test_cores3 import GOLDEN
+    value = copy.deepcopy(GOLDEN['capabilities'])
+    window.bridge_changed(value)
+    window.hf_readers.setCurrentText(cores3.HF_READER)
+    window.ntag_password.setText('01020304')
+    window.ntag_pack.setText('1234')
+    value = copy.deepcopy(value)
+    value.update(mode=mode, owner={'home': 'none', 'standalone': 'local', 'connected': 'desktop'}[mode],
+                 modePending=pending)
+    window.bridge_changed(value)
+    assert window.hf_readers.findText(cores3.HF_READER) == -1
+    assert not window.ntag_password.isEnabled() and not window.ntag_password.text()
+    assert not window.ntag_pack.text() and not window.hf_read_button.isEnabled()
+    assert not window.hf_write_records_button.isEnabled()
+    assert window.cores3_connection.status.text() == cores3.mode_description(value)
+    value = copy.deepcopy(value)
+    value.update(mode='connected', owner='desktop', modePending=False)
+    window.bridge_changed(value)
+    assert window.hf_readers.findText(cores3.HF_READER) >= 0
+    assert window.hf_readers.currentIndex() == -1
+
+
 def test_appearance_modes_persist_without_card_data(window, app):
     from PySide6.QtGui import QPalette
     for mode, dark in [('Dark', True), ('Light', False)]:
@@ -115,3 +143,231 @@ def test_uhf_module_reports_display_real_rssi_and_unknown_frequency(window):
     window.tag_received(tag)
     assert window.uhf_tags.item(0, 2).text() == 'Not reported'
     assert window.uhf_tags.item(0, 3).text() == '-55'
+
+
+def wait_idle(window, app):
+    import time
+    from PySide6.QtTest import QTest
+    deadline = time.monotonic() + 10
+    while window.busy and time.monotonic() < deadline:
+        app.processEvents()
+        QTest.qWait(5)
+    app.processEvents()
+    assert not window.busy, window.status.text()
+
+
+@pytest.mark.parametrize('family', ['classic4k', 'ntag213', 'ntag215', 'ntag216'])
+def test_cores3_real_ui_read_data_write_records_and_profiles(window, app, monkeypatch, family):
+    from quadband import cores3, hf
+    from test_cores3 import TypedWire
+    from test_hf_families import Classic4K, NTAG
+    card = Classic4K(True) if family == 'classic4k' else NTAG(family)
+    wire = TypedWire(card)
+    async def connect():
+        window.service.bridge = cores3.Session(wire, window.service.bridge_changed)
+        await window.service.bridge.hello()
+        return 'Simulated CoreS3 connected'
+    window.run(connect)
+    wait_idle(window, app)
+    window.nav.setCurrentRow(3)
+    assert window.sidebar.isAncestorOf(window.cores3_connection)
+    assert window.hf_readers.findText(cores3.HF_READER) >= 0
+    assert window.hf_readers.currentIndex() == -1
+    window.hf_readers.setCurrentText(cores3.HF_READER)
+    window.read_hf()
+    wait_idle(window, app)
+    assert window.snapshot is not None, window.status.text()
+    assert window.block_table.rowCount() == card.info.unit_count
+    assert window.block_number.maximum() == card.info.unit_count-1
+    assert family in window.hf_info.toPlainText()
+    assert window.hf_write_records_button.isEnabled()
+    monkeypatch.setattr(window, 'review', lambda *_: True)
+    unit = 128 if family == 'classic4k' else 6
+    size = card.info.unit_size
+    window.block_number.setValue(unit)
+    window.block_data.setText('AA '*size)
+    window.write_hf_block()
+    wait_idle(window, app)
+    assert card.writes and card.writes[-1] == (unit, b'\xaa'*size), window.status.text()
+    # Restore an intact simulated message before exercising the record editor.
+    if family == 'classic4k':
+        restored = Classic4K(True)
+        card.memory.update(restored.memory)
+    else:
+        restored = NTAG(family)
+        card.pages.update(restored.pages)
+    window.read_hf()
+    wait_idle(window, app)
+    window.records = [ndef.Record.text('Qt bridge write')]
+    window.ndef_overwrite.setChecked(True)
+    window.update_records()
+    window.write_records()
+    wait_idle(window, app)
+    assert window.ndef_area is not None, window.status.text()
+    assert window.ndef_area.records == window.records
+    window.use_profile()
+    assert window.profile['family'] == family
+    assert len(hf.profile_blocks(window.profile)) == len(hf.eligible_units(family))
+    assert window.hf_write_profile_button.isEnabled()
+    window.write_profile()
+    wait_idle(window, app)
+    assert 'verified' in window.status.text().lower(), window.status.text()
+    window.run(window.service.close)
+    wait_idle(window, app)
+    assert wire.closed
+
+
+def test_bridge_generation_invalidates_preview_and_never_selects_replacement(window):
+    import copy
+    from quadband import cores3, hf
+    from test_cores3 import GOLDEN
+    value = copy.deepcopy(GOLDEN['capabilities'])
+    window.bridge_changed(value)
+    window.hf_readers.setCurrentText(cores3.HF_READER)
+    window.snapshot = hf.Snapshot(hf.CardInfo(b'1234', atqa=b'\4\0', sak=8))
+    window.ntag_password.setText('11223344')
+    window.ntag_pack.setText('1234')
+    assert window.authentication() == bytes.fromhex('02112233441234')
+    value = copy.deepcopy(value)
+    value['peripherals'][0]['generation'] += 1
+    window.bridge_changed(value)
+    assert window.snapshot is None and window.hf_readers.currentIndex() == -1
+    assert not window.ntag_password.text() and not window.ntag_pack.text()
+    assert not window.hf_write_block_button.isEnabled()
+    window.bridge_changed(None)
+    assert window.hf_readers.findText(cores3.HF_READER) < 0
+    assert window.settings.allKeys() == []
+
+
+def test_ndef_editor_bulk_limit_reorder_capacity_and_options_default_off(window):
+    from quadband.common import CardError
+    assert not window.ndef_overwrite.isChecked() and not window.ndef_format.isChecked()
+    window.ndef_family.setCurrentIndex(window.ndef_family.findData('ntag213'))
+    window.records = [ndef.Record.text(str(i)) for i in range(4)]
+    window.update_records()
+    assert '4 records' in window.record_size.text() and '142' in window.record_size.text()
+    with pytest.raises(CardError, match='one to three'):
+        window.ndef_job(True)
+    assert len(window.ndef_job(False).records) == 4
+    window.record_list.setCurrentRow(3)
+    window.move_record(-1)
+    assert window.records[2].display()[1] == '3'
+    window.remove_record()
+    assert len(window.records) == 3
+    assert len(window.ndef_job(True).records) == 3
+    window.ndef_overwrite.setChecked(True)
+    window.ndef_format.setChecked(True)
+    window.clear_session()
+    assert not window.ndef_overwrite.isChecked() and not window.ndef_format.isChecked()
+    assert window.settings.allKeys() == []
+
+
+def test_ndef_review_default_is_cancel(window, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    seen = []
+    def execute(box):
+        seen.append(box.defaultButton())
+        assert box.defaultButton() == box.button(QMessageBox.StandardButton.Cancel)
+        return QMessageBox.StandardButton.Cancel
+    monkeypatch.setattr(QMessageBox, 'exec', execute)
+    assert not window.review('Target-bound review', 'One target only')
+    assert seen
+
+
+@pytest.mark.parametrize('accepted', [False, True])
+def test_real_qt_bulk_requires_each_review_and_freezes_controls(window, app, monkeypatch, accepted):
+    import asyncio
+    from contextlib import asynccontextmanager
+    from quadband import cores3, ntag
+    from test_type2 import Physical
+    from test_hf_families import NTAG
+    card = NTAG('ntag215')
+    backend = Physical(card)
+    steps = iter([True, False, True, True, False, True, True])
+    reviews = []
+    async def present():
+        value = next(steps, None)
+        if value is None:
+            window.stop_flag.set()
+            return True
+        return value
+    backend.present = present
+    @asynccontextmanager
+    async def session(name, auth):
+        yield cores3.HFClient(backend)
+    def review(title, message):
+        assert window.busy and not window.stack.isEnabled() and not window.connection_panel.isEnabled()
+        assert 'UID 04010203040506' in message and 'ntag215' in message
+        reviews.append(message)
+        return accepted
+    monkeypatch.setattr(window.service, 'hf_session', session)
+    monkeypatch.setattr(window, 'review', review)
+    window.hf_readers.addItem('Simulated PCSC')
+    window.ndef_family.setCurrentIndex(window.ndef_family.findData('ntag215'))
+    window.ndef_overwrite.setChecked(True)
+    window.records = [ndef.Record.text('Bulk Qt')]
+    window.update_records()
+    window.start_ndef_bulk()
+    wait_idle(window, app)
+    assert len(reviews) == 2
+    if accepted:
+        assert card.writes and ntag.Type2NDEF(asyncio.run(ntag.Client(card).read())).records == window.records
+        assert window.ndef_bulk_totals.text() == '2 verified · 0 failed'
+    else:
+        assert not card.writes and window.ndef_bulk_totals.text() == '0 verified · 0 failed'
+
+
+@pytest.mark.parametrize('family', ['ntag213', 'ntag215', 'ntag216'])
+def test_initialized_empty_ntag_first_record_ui(window, app, monkeypatch, family):
+    from quadband import cores3, hf
+    from test_cores3 import TypedWire
+    from test_hf_families import NTAG
+    card = NTAG(family)
+    for page in hf.eligible_units(family):
+        card.pages[page] = bytes(4)
+    wire = TypedWire(card)
+    async def connect():
+        window.service.bridge = cores3.Session(wire, window.service.bridge_changed)
+        await window.service.bridge.hello()
+    window.run(connect)
+    wait_idle(window, app)
+    window.nav.setCurrentRow(3)
+    window.hf_readers.setCurrentText(cores3.HF_READER)
+    window.read_hf()
+    wait_idle(window, app)
+    assert window.ndef_area is not None and window.ndef_area.records == [], window.status.text()
+    assert window.hf_write_records_button.isEnabled()
+    monkeypatch.setattr(window, 'review', lambda *_: True)
+    window.records = [ndef.Record.text('First message from the record editor')]
+    window.update_records()
+    window.write_records()
+    wait_idle(window, app)
+    assert window.ndef_area is not None and window.ndef_area.records == window.records, window.status.text()
+    assert card.writes[0] == (4, bytes(4)) and card.writes[-1][0] == 4
+
+
+def test_core_s3_uhf_selection_uses_module_limits_without_serial_port(window):
+    window.uhf_connection.mode.setCurrentText('CoreS3')
+    assert window.uhf_connection.reader_profile.currentText() == 'M5Stack JRD-4035'
+    assert not window.uhf_connection.baud.isEnabled()
+    assert window.uhf_power.minimum() == 18 and window.uhf_power.maximum() == 26
+    assert not any(b.isEnabled() for b in window.uhf_buzzer_buttons)
+
+
+def test_cores3_auth_capability_required_and_clear_session_forgets_credentials(window):
+    import copy
+    from quadband import cores3
+    from test_cores3 import GOLDEN
+    value = copy.deepcopy(GOLDEN['capabilities'])
+    value['peripherals'][0]['capabilities'].remove('ntag_auth')
+    window.bridge_changed(value)
+    window.hf_readers.setCurrentText(cores3.HF_READER)
+    assert not window.ntag_password.isEnabled() and window.authentication() == b'\0'
+    value['peripherals'][0]['capabilities'].append('ntag_auth')
+    value['peripherals'][0]['generation'] += 1
+    window.bridge_changed(value)
+    window.hf_readers.setCurrentText(cores3.HF_READER)
+    window.ntag_password.setText('11223344')
+    window.ntag_pack.setText('1234')
+    window.clear_session()
+    assert not window.ntag_password.text() and not window.ntag_pack.text()

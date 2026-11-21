@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Quadband CoreS3 released web-flash catalog",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "board", "chipFamily", "flashSize", "flashMode", "flashFrequency",
+    "applicationVersion", "firmwareVersion", "releaseTag", "sourceCommit", "sourceDirty", "parts"
+  ],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "board": {"const": "M5Stack CoreS3"},
+    "chipFamily": {"const": "ESP32-S3"},
+    "flashSize": {"const": 16777216},
+    "flashMode": {"const": "dio"},
+    "flashFrequency": {"const": "80m"},
+    "applicationVersion": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "firmwareVersion": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "releaseTag": {"type": "string", "pattern": "^v(?:[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?|1\\.0[12])$"},
+    "sourceCommit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "sourceDirty": {"type": "boolean"},
+    "parts": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "prefixItems": [
+        {
+          "allOf": [{"$ref": "#/$defs/part"}],
+          "properties": {
+            "role": {"const": "bootloader"},
+            "path": {"const": "firmware/bootloader.bin"},
+            "offset": {"const": 0},
+            "size": {"maximum": 32768}
+          }
+        },
+        {
+          "allOf": [{"$ref": "#/$defs/part"}],
+          "properties": {
+            "role": {"const": "partition-table"},
+            "path": {"const": "firmware/partition-table.bin"},
+            "offset": {"const": 32768},
+            "size": {"const": 3072}
+          }
+        },
+        {
+          "allOf": [{"$ref": "#/$defs/part"}],
+          "properties": {
+            "role": {"const": "application"},
+            "path": {"const": "firmware/quadband_cores3.bin"},
+            "offset": {"const": 65536},
+            "size": {"maximum": 1536000}
+          }
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "part": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "path", "offset", "size", "sha256"],
+      "properties": {
+        "role": {"type": "string"},
+        "path": {"type": "string"},
+        "offset": {"type": "integer", "minimum": 0},
+        "size": {"type": "integer", "minimum": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  }
+}

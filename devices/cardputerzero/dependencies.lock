@@ -1,0 +1,18 @@
+{
+  "lvgl": {
+    "url": "https://github.com/lvgl/lvgl.git",
+    "version": "9.5.0",
+    "revision": "85aa60d18b3d5e5588d7b247abf90198f07c8a63",
+    "license": "MIT"
+  },
+  "fontNotices": {
+    "Montserrat-OFL.txt": {
+      "url": "https://raw.githubusercontent.com/google/fonts/main/ofl/montserrat/OFL.txt",
+      "sha256": "8b7141c03fa4f8d44e6345d5d4931709290f0f67875e452e95ac1fd3a027802e"
+    },
+    "FontAwesome-LICENSE.txt": {
+      "url": "https://raw.githubusercontent.com/FortAwesome/Font-Awesome/5.15.4/LICENSE.txt",
+      "sha256": "e779748dfe75e84f974df3c7bc07f842011a100159158b0f1f49b2f2a5a515cb"
+    }
+  }
+}

@@ -1,6 +1,8 @@
 """Chameleon Ultra official 2.x commands. SPDX-License-Identifier: GPL-3.0-only"""
 import asyncio
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from functools import wraps
 from .common import CardError, NoCard, AuthenticationError, require
 from . import t5577
 
@@ -88,11 +90,33 @@ def decode_lf(data, format):
     return LFCard(format, data[:13] if format == 'HID Prox' and len(data) == 16 else data)
 
 
+def exclusive(function):
+    @wraps(function)
+    async def perform(self, *args, **kwargs):
+        async with self.lease():
+            return await function(self, *args, **kwargs)
+    return perform
+
+
 class Chameleon:
     def __init__(self, transport):
         self.transport, self.capabilities, self.original_mode = transport, set(), None
+        self.owner, self.depth = None, 0
+
+    @asynccontextmanager
+    async def lease(self):
+        task = asyncio.current_task()
+        require(self.owner is None or self.owner is task, 'Chameleon HF/LF reader is already in use.')
+        self.owner, self.depth = task, self.depth + 1
+        try:
+            yield
+        finally:
+            self.depth -= 1
+            if not self.depth:
+                self.owner = None
 
     async def command(self, command, data=b'', status=0x68, timeout=3):
+        require(self.owner is None or self.owner is asyncio.current_task(), 'Chameleon HF/LF reader is already in use.')
         t5577.guard(command, data)
         reply = await self.transport.exchange(command, data, timeout)
         if reply.status != status:
@@ -128,6 +152,7 @@ class Chameleon:
         finally:
             await self.transport.close()
 
+    @exclusive
     async def scan(self, format=None, hint=0):
         await self.reader_mode()
         formats = [format] if format else [f for f in FORMATS if f != 'EM410x Electra' and FORMATS[f][0] in self.capabilities]
@@ -141,6 +166,7 @@ class Chameleon:
                 continue
         return None
 
+    @exclusive
     async def write(self, card):
         require(3016 in self.capabilities and FORMATS[card.format][0] in self.capabilities,
                 'Password-free writing requires firmware with command 3016 and a matching scan command. Legacy password-setting writers are disabled.')
@@ -175,7 +201,7 @@ class Chameleon:
             return False
 
     async def read_block(self, block, credential):
-        require(2008 in self.capabilities and 0 <= block < 64, 'HF block read is unavailable.')
+        require(2008 in self.capabilities and 0 <= block < 256, 'HF block read is unavailable.')
         key, kind = credential
         require(len(key) == 6 and kind in (0x60, 0x61), 'Invalid Classic key.')
         data = await self.command(2008, bytes([kind, block]) + key, status=0)
@@ -184,7 +210,8 @@ class Chameleon:
 
     async def write_block(self, block, data, credential):
         from .hf import data_block
-        require(2009 in self.capabilities and data_block(block) and len(data) == 16, 'Only Classic data blocks can be written.')
+        card = await self.identify()
+        require(card.classic and 2009 in self.capabilities and data_block(block, card.unit_count) and len(data) == 16, 'Only Classic data blocks can be written.')
         key, kind = credential
         require(len(key) == 6 and kind in (0x60, 0x61), 'Invalid Classic key.')
         require(not await self.command(2009, bytes([kind, block])+key+data, status=0), 'Unexpected HF write response.')

@@ -33,3 +33,7 @@ The M100-family drivers are independent implementations of the documented UART p
 - M5Stack Unit RFID-UHF Common Control Commands: https://m5stack-doc.oss-cn-shenzhen.aliyuncs.com/842/Unit-RFID-UHF-Protocol-EN.pdf
 - M5Stack reference examples (MIT; reference only): https://github.com/m5stack/M5Unit-UHF-RFID
 - MagicRF M100/QM100 firmware command reference, linked by the YRM100 project: https://github.com/frux-c/uhf_rfid/blob/master/assets/res/MagicRF_M100%26QM100_Firmware_manual_en.pdf
+
+## CoreS3 firmware dependencies
+
+The development firmware uses native ESP-IDF/NimBLE and Espressif USB CDC-ACM (Apache-2.0 and their bundled component notices), M5Unified/M5GFX, M5Unit-RFID/M5Unit-NFC, M5UnitUnified, M5HAL and M5Utility (MIT and applicable bundled notices). Exact source URLs and immutable revisions are in firmware/cores3/dependencies.lock. Preserve the fetched licenses/font/third-party notices when distributing a binary; scripts/package-cores3.py gathers notice files alongside the local firmware bundle and includes the original application source. This does not relicense upstream code. Hardware SDKs and generated private configuration are excluded from public application source archives.

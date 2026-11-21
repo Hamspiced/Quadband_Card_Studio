@@ -10,30 +10,46 @@ public struct CardCredentials: Codable, Equatable {
     }
     public var format = "quadband.classic1k.data"
     public var version = 1
+    public struct Geometry: Codable, Equatable {
+        public let unitSize: Int
+        public let unitCount: Int
+        public init(unitSize: Int, unitCount: Int) { self.unitSize = unitSize; self.unitCount = unitCount }
+    }
+    public var family: CardFamily?
+    public var geometry: Geometry?
+    public var cardFamily: CardFamily { family ?? .classic1k }
     public var name: String
     public var createdAt: Date
     public var blocks: [Block]
-    public init(snapshot: ClassicSnapshot, name: String = "Classic 1K data") throws {
-        guard snapshot.card.isClassic1K else { throw StripeError("Scan a Classic 1K card before saving its data.") }
-        self.name = name; createdAt = Date()
-        blocks = (0..<64).filter(ClassicClient.isDataBlock).compactMap { block in
+    public init(snapshot: ClassicSnapshot, name: String? = nil) throws {
+        let kind = snapshot.card.family
+        guard kind != .unknown else { throw StripeError("Identify a supported card before saving its data.") }
+        if kind != .classic1k {
+            format = "quadband.card.data"; version = 2; family = kind
+            geometry = Geometry(unitSize:kind.unitSize,unitCount:kind.unitCount)
+        }
+        self.name = name ?? (kind == .classic1k ? "Classic 1K data" : "\(kind.rawValue) data"); createdAt = Date()
+        blocks = kind.dataUnits.compactMap { block in
             snapshot.blocks[block].map { Block(number: block, hex: HexBytes.string($0)) }
         }
         _ = try validatedBlocks()
     }
     public func validatedBlocks() throws -> [Int: [UInt8]] {
-        guard format == "quadband.classic1k.data", version == 1 else {
+        let legacy = format == "quadband.classic1k.data" && version == 1 && family == nil && geometry == nil
+        let modern = format == "quadband.card.data" && version == 2 && family != nil && cardFamily != .unknown &&
+            geometry == Geometry(unitSize:cardFamily.unitSize,unitCount:cardFamily.unitCount)
+        guard legacy || modern else {
             throw StripeError("This is not a supported Quadband Classic 1K credentials file.")
         }
         guard !name.isEmpty, name.count <= 100, !name.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
             throw StripeError("The credentials file has an invalid profile name.")
         }
-        let expected = Set((0..<64).filter(ClassicClient.isDataBlock))
-        guard blocks.count == 47, Set(blocks.map(\.number)) == expected else {
-            throw StripeError("A data profile requires all 47 data blocks exactly once. Read all sectors with their correct keys. UID and sector-trailer blocks cannot be included.")
+        let expected = Set(cardFamily.dataUnits)
+        guard blocks.count == expected.count, Set(blocks.map(\.number)) == expected else {
+            throw StripeError("A data profile requires all \(expected.count) eligible units exactly once. Protected metadata cannot be included.")
         }
         var result: [Int: [UInt8]] = [:]
-        for block in blocks { result[block.number] = try HexBytes.parse(block.hex, count: 16) }
+        for block in blocks { result[block.number] = try HexBytes.parse(block.hex, count: cardFamily.unitSize) }
         return result
     }
     public func encoded() throws -> Data {

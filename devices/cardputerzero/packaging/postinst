@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+if [ "${1:-}" = configure ]; then
+    attribute=/sys/class/leds/grove_5v_out/brightness
+    if [ -f "$attribute" ] && getent group gpio >/dev/null; then
+        chgrp gpio "$attribute"
+        chmod 0660 "$attribute"
+    fi
+    if command -v udevadm >/dev/null; then
+        udevadm control --reload-rules || true
+    fi
+fi
+exit 0

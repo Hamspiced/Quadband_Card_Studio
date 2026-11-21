@@ -20,13 +20,13 @@ extension NFCModel {
             let data = try credentials.encoded()
             let panel = NSSavePanel()
             panel.title = "Save card credentials"
-            panel.message = "Saves the 47 data blocks only. Card UID and sector keys are not included."
+            panel.message = "Saves eligible data units only. UID, keys, credentials and protected metadata are not included."
             panel.allowedContentTypes = [credentialsType]
-            panel.nameFieldStringValue = "Classic-1K-credentials.qcard"
+            panel.nameFieldStringValue = "\(snapshot.card.family.rawValue)-data.qcard"
             guard panel.runModal() == .OK, let url = panel.url else { return }
             try data.write(to: url, options: [.atomic])
             profile = credentials; profileOrigin = url.lastPathComponent
-            status = "Saved 47 data blocks to \(url.lastPathComponent)."; statusKind = .success
+            status = "Saved \(credentials.blocks.count) data units to \(url.lastPathComponent)."; statusKind = .success
         } catch { failed(error) }
     }
     func chooseCredentials() {
@@ -44,29 +44,29 @@ extension NFCModel {
             guard let size = values.fileSize, size <= 65536 else { throw StripeError("Choose a Quadband credentials file smaller than 64 KB.") }
             let validated = try CardCredentials.decode(Data(contentsOf: url))
             profile = validated; profileOrigin = url.lastPathComponent
-            status = "Loaded 47 data blocks. Place a target card on the reader, then Write profile & verify."; statusKind = .neutral
+            status = "Loaded \(validated.blocks.count) \(validated.cardFamily.rawValue) data units. Place a target card on the reader, then Write profile & verify."; statusKind = .neutral
         } catch { failed(error) }
     }
     func writeProfileOnce() {
-        guard !busy, !selectedReader.isEmpty, let profile else { return }
+        guard !busy, !selectedReader.isEmpty, let profile, writableFamily(selectedReader,profile.cardFamily) else { return }
         let keyBytes: [UInt8]
-        do { keyBytes = try HexBytes.parse(key, count: 6); _ = try profile.validatedBlocks() }
+        do { keyBytes = profile.cardFamily.isNTAG ? [] : try HexBytes.parse(key, count: 6); _ = try profile.validatedBlocks() }
         catch { failed(error); return }
         let reader = selectedReader, type = keyType
         busy = true; writing = true; readerChanged()
-        status = "Writing 47 data blocks and verifying. Keep the target card on the reader…"; statusKind = .working
+        status = "Writing \(profile.blocks.count) data units and verifying. Keep the target card on the reader…"; statusKind = .working
         operation = Task {
             defer { busy = false; writing = false; operation = nil }
             do {
                 let card = try await service.writeProfile(reader: reader, profile: profile, key: keyBytes, type: type)
-                status = "Verified — all 47 data blocks match. Target card ID: \(HexBytes.string(card.uid))."; statusKind = .success
+                status = "Verified — all \(profile.blocks.count) data units match. Target card ID: \(HexBytes.string(card.uid))."; statusKind = .success
             } catch { failed(error) }
         }
     }
     func startBatch() {
-        guard !busy, !selectedReader.isEmpty, let profile else { return }
+        guard !busy, !selectedReader.isEmpty, let profile, writableFamily(selectedReader,profile.cardFamily) else { return }
         let keyBytes: [UInt8]
-        do { keyBytes = try HexBytes.parse(key, count: 6); _ = try profile.validatedBlocks() }
+        do { keyBytes = profile.cardFamily.isNTAG ? [] : try HexBytes.parse(key, count: 6); _ = try profile.validatedBlocks() }
         catch { failed(error); return }
         let reader = selectedReader, type = keyType
         copiesSucceeded = 0; copiesFailed = 0; copyResults = []
@@ -91,7 +91,7 @@ extension NFCModel {
                         do {
                             let card = try await service.writeProfile(reader: reader, profile: profile, key: keyBytes, type: type)
                             copiesSucceeded += 1
-                            appendCopyResult(number: number, success: true, detail: "47 blocks verified · ID \(HexBytes.string(card.uid))")
+                            appendCopyResult(number: number, success: true, detail: "\(profile.blocks.count) units verified · ID \(HexBytes.string(card.uid))")
                         } catch {
                             copiesFailed += 1
                             appendCopyResult(number: number, success: false, detail: error.localizedDescription)

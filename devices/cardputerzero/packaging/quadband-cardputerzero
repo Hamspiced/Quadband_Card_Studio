@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /usr/lib/quadband-cardputerzero/quadband-cardputerzero --device "$@"
