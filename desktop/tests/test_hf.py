@@ -192,3 +192,139 @@ async def test_copy_formatted_card_does_not_require_writing_unchanged_mad():
     profile = hf.profile_from_snapshot(await hf.ClassicClient(source).read())
     await hf.ClassicClient(target).write_profile(profile)
     assert target.writes == [(5, source.memory[5])]
+
+
+RECORDS = [ndef.Record.uri('https://midwestgadgets.org')]
+
+
+def encoding_backend(card):
+    from test_type2 import Physical
+    backend = Physical(card)
+    if card.formatted:
+        backend.keys = {s: (bytes.fromhex('A0A1A2A3A4A5' if s == 0 else 'D3F7D3F7D3F7'), 0x60)
+                        for s in range(16)}
+    return backend
+
+
+async def encode_card(card, records=RECORDS, overwrite=False, format=True, backend=None):
+    from quadband import bulk, cores3
+    backend = backend or encoding_backend(card)
+    client = cores3.HFClient(backend)
+    job = bulk.Job.freeze('classic1k', records, overwrite=overwrite, format=format)
+    review = await bulk.prepare(client, job)
+    already = review.area is not None and review.area.records == list(job.records)
+    snapshot, _ = await bulk.execute(client, review)
+    return snapshot, review.needs_format, not already, backend
+
+
+async def test_encode_formats_blank_tag_then_writes_and_verifies():
+    card = Card(False)
+    snapshot, formatted, written, _ = await encode_card(card)
+    assert formatted and written and hf.ClassicNDEF(snapshot).records == RECORDS
+    trailers = [b for b, _ in card.writes if b % 4 == 3]
+    assert trailers[-1] == 3 and sorted(trailers) == list(range(3, 64, 4))
+    assert card.memory[0] == bytes(16)
+
+
+async def test_encode_replaces_formatted_tag_and_skips_identical():
+    card = Card()
+    backend = encoding_backend(card)
+    _, formatted, written, _ = await encode_card(card, [ndef.Record.text('new')], overwrite=True, backend=backend)
+    assert not formatted and written
+    card.writes.clear()
+    _, _, written, _ = await encode_card(card, [ndef.Record.text('new')], backend=backend)
+    assert not written and not card.writes
+
+
+async def test_format_refuses_tags_holding_data_or_locked_keys():
+    card = Card(False)
+    card.memory[5] = b'\x55'*16
+    with pytest.raises(CardError, match='already holds data'):
+        await encode_card(card)
+    assert not card.writes
+    _, formatted, _, _ = await encode_card(card, overwrite=True)
+    assert formatted
+    locked = Card(False)
+    locked.memory[7] = locked.memory[7][:6]+bytes.fromhex('787788')+locked.memory[7][9:]
+    with pytest.raises(CardError, match='factory'):
+        await encode_card(locked)
+    assert not locked.writes
+
+
+async def test_format_failure_is_reported_and_does_not_continue():
+    card = Card(False)
+    backend = encoding_backend(card)
+    backend.reject = 4
+    with pytest.raises(CardError, match='unverified'):
+        await encode_card(card, backend=backend)
+    assert len(card.writes) == 1 and card.writes[0][0] == 4
+
+
+async def drive_encoding(steps, confirm_hook=None):
+    from quadband import bulk, cores3
+    stop, results, phases, reviews = StopFlag(), [], [], []
+    class Reader:
+        def __init__(self):
+            self.steps, self.backends, self.current = list(steps), {}, None
+        def __getattr__(self, name):
+            if self.current is None:
+                raise AttributeError(name)
+            return getattr(self.current, name)
+        async def present(self):
+            if not self.steps:
+                stop.set()
+                return False
+            card = self.steps.pop(0)
+            if isinstance(card, Exception):
+                raise card
+            if card is None:
+                self.current = None
+                return False
+            if card not in self.backends:
+                self.backends[card] = encoding_backend(card)
+            self.current = self.backends[card]
+            self.current.cancelled = stop.is_set
+            return True
+    reader = Reader()
+    @asynccontextmanager
+    async def factory():
+        yield cores3.HFClient(reader)
+    async def confirm(review):
+        reviews.append(review)
+        if confirm_hook:
+            confirm_hook(reader)
+        return True
+    job = bulk.Job.freeze('classic1k', RECORDS, format=True)
+    await asyncio.wait_for(bulk.run(factory, job, hf.FACTORY, stop, phases.append,
+                                   lambda *r: results.append(r), confirm, .001), 5)
+    return results, phases, reviews
+
+
+async def test_bulk_encodes_each_tag_once_and_requires_removal():
+    a, b = Card(False), Card()
+    b.info = hf.CardInfo(b'\2\2\2\2', b.info.atr)
+    results, phases, reviews = await drive_encoding([None, a, a, a, None, b, b, None, a])
+    assert [r[0] for r in results] == [True, True, True]
+    assert 'Formatted' in results[0][1] and 'Already correct' in results[1][1]
+    assert 'Already correct' in results[2][1] and len(reviews) == 3
+    assert not b.writes
+    assert any('Remove' in phase for phase in phases)
+
+
+async def test_bulk_failure_counts_continues_and_multiple_tag_trouble_is_not_counted():
+    bad, good = Card(False), Card(False)
+    bad.memory[5] = b'\x55'*16
+    good.info = hf.CardInfo(b'\2\2\2\2', good.info.atr)
+    results, phases, _ = await drive_encoding([None, bad, None, CardError('Keep one HF card on the antenna.'), None, good])
+    assert [r[0] for r in results] == [False, True] and 'already holds data' in results[0][1]
+    assert not bad.writes and good.writes
+    assert any('Reader error is not removal' in phase for phase in phases)
+
+
+async def test_bulk_does_not_write_when_identity_changes_after_review():
+    card = Card(False)
+    def swap(reader):
+        reader.current.tag.info = hf.CardInfo(b'\t'*4, card.info.atr)
+    results, _, reviews = await drive_encoding([None, card], swap)
+    assert len(reviews) == 1 and [r[0] for r in results] == [False]
+    assert not card.writes
