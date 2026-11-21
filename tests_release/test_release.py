@@ -105,6 +105,27 @@ class VersionTests(unittest.TestCase):
 
 
 class PackagingTests(unittest.TestCase):
+    def test_binary_upload_accepts_json_and_binary_download_accepts_octets(self):
+        class Response:
+            def __enter__(self):
+                return self
+            def __exit__(self, *_):
+                return False
+            def read(self):
+                return b'{"id":1}'
+        client = assets.GitHub('example/project')
+        for method, url, data, accept in (
+            ('POST', 'https://uploads.github.com/repos/example/project/releases/1/assets?name=test.zip',
+             b'fixture', 'application/vnd.github+json'),
+            ('GET', 'https://api.github.com/repos/example/project/releases/assets/1',
+             None, 'application/octet-stream'),
+        ):
+            with self.subTest(method=method), patch.object(client.opener,'open',return_value=Response()) as request:
+                self.assertEqual(client.request(url,method=method,data=data,binary=True), b'{"id":1}')
+                self.assertEqual(request.call_args.args[0].get_header('Accept'), accept)
+                if data is not None:
+                    self.assertEqual(request.call_args.args[0].get_header('Content-type'), 'application/octet-stream')
+
     def test_mac_architecture_verification_puts_the_binary_before_arch_names(self):
         source = (ROOT/'scripts/build-app.sh').read_text()
         self.assertIn('lipo "$APP/Contents/MacOS/MagStripeStudio" -verify_arch "$ARCH"', source)

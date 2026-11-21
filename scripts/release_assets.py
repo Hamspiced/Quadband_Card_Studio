@@ -177,7 +177,8 @@ class GitHub:
         parsed = urllib.parse.urlparse(url)
         if parsed.scheme != 'https' or parsed.hostname not in ('api.github.com', 'uploads.github.com'):
             raise ValueError('Unexpected GitHub API host.')
-        headers = {'Accept': 'application/octet-stream' if binary else 'application/vnd.github+json',
+        binary_download = binary and method == 'GET'
+        headers = {'Accept': 'application/octet-stream' if binary_download else 'application/vnd.github+json',
                    'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'quadband-release'}
         if self.token:
             headers['Authorization'] = 'Bearer '+self.token
