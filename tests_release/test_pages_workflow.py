@@ -8,12 +8,33 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class PagesWorkflowTests(unittest.TestCase):
     def test_third_party_actions_are_pinned(self):
-        for name in ("build.yml", "release.yml", "pages.yml"):
+        for name in ("build.yml", "release.yml", "pages.yml", "cardputerzero.yml"):
             text = (ROOT/".github/workflows"/name).read_text()
             for action in re.findall(r"uses:\s+(\S+)", text):
                 with self.subTest(workflow=name, action=action):
                     self.assertTrue(action.startswith("./") or
                                     re.fullmatch(r"[A-Za-z0-9_./-]+@[0-9a-f]{40}", action))
+
+    def test_maintained_node_actions_use_reviewed_node24_pins(self):
+        approved = {
+            "actions/setup-node": "949feb2413d6458794dcd2491c4babbbce0c15c1",
+            "actions/download-artifact": "9000827ccba6bdab643e8b6fd33ac0654aef8333",
+            "actions/github-script": "3a2844b7e9c422d3c10d287c895573f7108da1b3",
+            "actions/configure-pages": "45bfe0192ca1faeb007ade9deae92b16b8254a0d",
+            "actions/deploy-pages": "368f82528645a54fb793d4d04e342629a3f51346",
+            "actions/upload-pages-artifact": "fc324d3547104276b827a68afc52ff2a11cc49c9",
+        }
+        seen = set()
+        for path in (ROOT/".github/workflows").glob("*.yml"):
+            for action in re.findall(r"uses:\s+(\S+)", path.read_text()):
+                name, _, revision = action.partition("@")
+                if name in approved:
+                    self.assertEqual(revision, approved[name], str(path))
+                    seen.add(name)
+        self.assertEqual(seen, set(approved))
+        pages = (ROOT/".github/workflows/pages.yml").read_text()
+        self.assertNotIn("require('@actions/github')", pages)
+        self.assertNotIn('require("@actions/github")', pages)
 
     def test_pages_waits_for_successful_stable_release_publication(self):
         text = (ROOT/".github/workflows/release.yml").read_text()
