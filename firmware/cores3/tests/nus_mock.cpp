@@ -34,9 +34,12 @@ void notification(const qb::Bytes& bytes, uint16_t handle = 7) {
 qb::Bytes frame(unsigned command, const qb::Bytes& payload = {}) {
     qb::Bytes b{0x11,0xef,uint8_t(command>>8),uint8_t(command),0,0x68,
         uint8_t(payload.size()>>8),uint8_t(payload.size()),0};
-    uint8_t sum = 0; for (auto v : b) sum += v; b[8] = -sum;
+    uint8_t sum = 0;
+    for (auto v : b) sum += v;
+    b[8] = -sum;
     b.insert(b.end(), payload.begin(), payload.end()); sum = 0;
-    for (auto v : payload) sum += v; b.push_back(-sum); return b;
+    for (auto v : payload) sum += v;
+    b.push_back(-sum); return b;
 }
 void emit_disconnect() {
     ble_gap_event e{}; e.type = BLE_GAP_EVENT_DISCONNECT; e.disconnect.conn = peer; event(e);
@@ -149,6 +152,12 @@ int ble_sm_inject_io(uint16_t, const ble_sm_io* io) { assert(io->action == BLE_S
 }
 int main() {
     using namespace qb;
+    Command sensitive{Action::Input, 42};
+    sensitive.challenge = 99; sensitive.passkey = 654321;
+    std::fill(std::begin(sensitive.data), std::end(sensitive.data), 0x5a);
+    clear_command(sensitive);
+    const auto* cleared = reinterpret_cast<const uint8_t*>(&sensitive);
+    for (size_t i = 0; i < sizeof(sensitive); ++i) assert(cleared[i] == 0);
     ScopedBondTable<unsigned> bonds; const auto eq=[](unsigned a,unsigned b){return a==b;};
     unsigned old_desktop=11;
     bonds.reconcile(&old_desktop,1,true,eq);

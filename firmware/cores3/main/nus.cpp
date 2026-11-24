@@ -40,6 +40,10 @@ struct Command {
     uint32_t passkey = 0;
     uint8_t size = 0, data[20]{};
 };
+void clear_command(Command& command) {
+    auto* bytes = reinterpret_cast<volatile uint8_t*>(&command);
+    for (size_t i = 0; i < sizeof(command); ++i) bytes[i] = 0;
+}
 QueueHandle_t commands;
 ble_npl_event command_event;
 void* token(uint64_t epoch) { return reinterpret_cast<void*>(uintptr_t(epoch)); }
@@ -211,7 +215,7 @@ void execute(ble_npl_event*) {
     Command command{};
     while (xQueueReceive(commands, &command, 0) == pdTRUE) {
         std::lock_guard<std::mutex> lock(mutex);
-        if (!lifecycle.current(command.epoch)) { std::memset(&command, 0, sizeof(command)); continue; }
+        if (!lifecycle.current(command.epoch)) { clear_command(command); continue; }
         switch (command.action) {
         case Action::Scan: {
             if (connection != BLE_HS_CONN_HANDLE_NONE || ble_hs_id_infer_auto(0, &own_address_type)) { fail("Disconnect before scanning."); break; }
@@ -248,7 +252,7 @@ void execute(ble_npl_event*) {
                                      write_complete, token(command.epoch))) fail("Reader write failed; no replay.");
             break;
         }
-        std::memset(&command, 0, sizeof(command));
+        clear_command(command);
     }
 }
 }

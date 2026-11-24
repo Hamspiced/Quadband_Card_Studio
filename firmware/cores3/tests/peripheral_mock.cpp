@@ -102,7 +102,8 @@ int ble_gatts_add_svcs(const ble_gatt_svc_def*) { return 0; }
 os_mbuf* ble_hs_mbuf_from_flat(const void*,uint16_t) { return nullptr; }
 int ble_gatts_indicate_custom(uint16_t,uint16_t,os_mbuf*) { return 0; }
 int ble_hs_mbuf_to_flat(const os_mbuf* om,void* out,uint16_t n,uint16_t* copied) {
-    if(om->size>n)return 1;std::memcpy(out,om->bytes,om->size);*copied=om->size;return 0;
+    if(om->size>n)return 1;
+    std::memcpy(out,om->bytes,om->size);*copied=om->size;return 0;
 }
 int ble_sm_inject_io(uint16_t,const ble_sm_io*) { return 0; }
 void ble_store_config_init() {}

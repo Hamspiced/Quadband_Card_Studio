@@ -117,7 +117,7 @@ int main() {
         assert(explicit_usb.devices[4].state==Detection::Manual && multiple.usb_enumerations==0);
         assert(explicit_usb.config.ultra_serial==manual.ultra_serial && !explicit_usb.config.ultra_autodetected);
     }
-    for (const auto pair : {std::pair{BUSY,Detection::Busy},std::pair{PERMISSION_DENIED,Detection::Permission},
+    for (const auto& pair : {std::pair{BUSY,Detection::Busy},std::pair{PERMISSION_DENIED,Detection::Permission},
                            std::pair{TIMEOUT,Detection::Missing},std::pair{UNSUPPORTED,Detection::Unsupported}}) {
         Probe usb; usb.usb={"/dev/ttyACM0"}; usb.statuses[4]=pair.first;
         const auto failed=run(usb);
