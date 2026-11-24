@@ -105,6 +105,13 @@ class VersionTests(unittest.TestCase):
 
 
 class PackagingTests(unittest.TestCase):
+    def test_zero_package_job_installs_bluetooth_test_runtime(self):
+        source = (ROOT/'.github/workflows/cardputerzero.yml').read_text()
+        package_job = source.split('  test-and-package:', 1)[1]
+        install = 'python -m pip install "bleak==3.0.2"'
+        self.assertIn(install, package_job)
+        self.assertLess(package_job.index(install), package_job.index('Cross-build and package without deployment'))
+
     def test_binary_upload_accepts_json_and_binary_download_accepts_octets(self):
         class Response:
             def __enter__(self):
