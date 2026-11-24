@@ -78,7 +78,7 @@ class Packaging(unittest.TestCase):
         self.assertFalse(any(".build/" in name or name.endswith(".md") for name in files))
 
     def test_real_development_package(self):
-        path = ROOT / "dist/quadband-cardputerzero_0.3.0_arm64.deb"
+        path = ROOT / "dist/quadband-cardputerzero_0.4.0_arm64.deb"
         if not path.exists():
             self.skipTest("Build the arm64 package to exercise its contents")
         ar = members(path.read_bytes())
@@ -86,6 +86,8 @@ class Packaging(unittest.TestCase):
         with tarfile.open(fileobj=io.BytesIO(ar["control.tar.gz"])) as archive:
             control = archive.extractfile("control").read().decode()
             self.assertIn("Architecture: arm64\n", control)
+            self.assertIn("python3-bleak (>= 0.22.3)", control)
+            self.assertIn("python3-dbus-fast", control)
             self.assertEqual(set(archive.getnames()), {"control", "postinst"})
             postinst = archive.extractfile("postinst").read().decode()
             self.assertIn("attribute=/sys/class/leds/grove_5v_out/brightness", postinst)
@@ -97,6 +99,9 @@ class Packaging(unittest.TestCase):
             files = {item.name: archive.extractfile(item).read() for item in archive if item.isfile()}
             self.assertFalse(any(name.endswith(".md") or "systemd/" in name or "sudoers" in name for name in files))
             app = "usr/lib/quadband-cardputerzero/quadband-cardputerzero"
+            for name in ("ble_helper.py", "ipc.py", "bluez_pair.py", "quadband/bluetooth.py",
+                         "quadband/common.py", "quadband/__init__.py"):
+                self.assertIn("usr/lib/quadband-cardputerzero/helper/" + name, files)
             package.arm64_static(files[app])
             rule = files["usr/lib/udev/rules.d/90-quadband-grove-power.rules"].decode()
             self.assertIn('KERNEL=="grove_5v_out"', rule)
@@ -107,6 +112,11 @@ class Packaging(unittest.TestCase):
                 self.assertEqual(hashlib.sha256(files[name]).hexdigest(), digest, name)
             with zipfile.ZipFile(io.BytesIO(files[doc + "Source.zip"])) as source:
                 self.assertIn("Quadband-Card-Studio/devices/cardputerzero/src/runtime.cpp", source.namelist())
+                for name in ("desktop/src/quadband/bluetooth.py", "desktop/src/quadband/common.py",
+                             "devices/cardputerzero/helper/ble_helper.py", "devices/cardputerzero/helper/bluez_pair.py"):
+                    archived = "Quadband-Card-Studio/" + name
+                    self.assertIn(archived, source.namelist())
+                    self.assertEqual(source.read(archived), (ROOT / name).read_bytes())
                 self.assertFalse(any(name.endswith(".md") for name in source.namelist()))
             self.assertIn(b"Tototo31", files[doc + "THIRD_PARTY.txt"])
             for notice in ("musl.txt", "libcxx.txt", "libcxxabi.txt", "libunwind.txt", "LVGL-LICENCE.txt",

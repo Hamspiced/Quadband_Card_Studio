@@ -1,4 +1,5 @@
 #include "runtime.hpp"
+#include "nus.hpp"
 #include "local_runtime.hpp"
 #include <M5Unified.h>
 #include <esp_random.h>
@@ -30,6 +31,8 @@ static std::atomic<bool> worker_running{false};
 static std::atomic<unsigned> last_status{0};
 static ModeBroker modes;
 static std::atomic<bool> refresh_requested{false};
+static std::atomic<int> ultra_request{0};
+static std::atomic<uint64_t> ultra_scan_epoch{0};
 static std::atomic<uint64_t> local_epoch{1};
 static std::atomic<unsigned> local_pending{0};
 static std::atomic<bool> local_stop_requested{false}, local_exit_requested{false};
@@ -60,7 +63,7 @@ std::string hex(const uint8_t* p, size_t n) {
 }
 std::string capabilities() {
     std::string s = "{\"protocol\":1,\"deviceId\":\"" + device_id +
-        "\",\"name\":\"Quadband CoreS3\",\"firmware\":\"0.4.0\",\"clientNonce\":\"" + client_nonce +
+        "\",\"name\":\"Quadband CoreS3\",\"firmware\":\"0.5.0\",\"clientNonce\":\"" + client_nonce +
         "\",\"mode\":\"" + mode_name(modes.mode()) + "\",\"owner\":\"" + mode_owner(modes.mode()) +
         "\",\"modePending\":" + (modes.pending() ? "true" : "false") + ",\"peripherals\":[";
     for (unsigned i = 0; i < 3; ++i) {
@@ -77,6 +80,12 @@ static void publish_capabilities_locked() {
     if (!session.nonce) return;
     Frame event; event.kind = 2; event.session = session.nonce; event.op = 128;
     auto j = capabilities(); event.payload.assign(j.begin(), j.end()); ble_send(event);
+}
+void peripheral_invalidate(unsigned ch) {
+    std::lock_guard<std::mutex> guard(state_mutex);
+    auto& slot = slots[ch - 1];
+    ++slot.generation; if (!slot.generation) ++slot.generation;
+    slot.present = false; slot.capabilities.clear(); publish_capabilities_locked();
 }
 void peripheral_changed(unsigned ch, bool present, const std::string& kind, const std::vector<std::string>& caps) {
     std::lock_guard<std::mutex> guard(state_mutex);
@@ -104,7 +113,7 @@ static void request(const Frame& f) {
         const char* text = "Select Connected mode on the CoreS3 to use readers.";
         response.payload.assign(text, text + std::strlen(text));
     }
-    if (response.status == OK && (worker_running || release_requested) && (!f.channel ? f.op == 1 : true)) {
+    if (response.status == OK && (worker_running || release_requested || ultra_request) && (!f.channel ? f.op == 1 : true)) {
         if (session.pending == f.id) session.pending = 0;
         response.status = BUSY;
     }
@@ -209,7 +218,7 @@ static void submit_local(const local::Intent& intent) {
         if (intent.command == local::Command::Exit) local_exit_requested = true;
         return;
     }
-    if (intent.command == local::Command::None || local_pending || worker_running || local_runtime_inventory() ||
+    if (intent.command == local::Command::None || local_pending || worker_running || ultra_request || local_runtime_inventory() ||
         local_stop_requested || local_exit_requested) {
         ui_message = "Finish or stop the active local operation.";
         return;
@@ -228,6 +237,23 @@ static void local_action(UiAction action, const UiSnapshot& shown) {
     if (release_unverified && (action == UiAction::ChooseConnected || action == UiAction::ChooseStandalone ||
         action == UiAction::ChooseHome || action == UiAction::ConfirmMode || action == UiAction::Stop)) return;
     switch (action) {
+    case UiAction::UltraPin: {
+        char digits[7]{}; ui::take_ultra_pin(digits);
+        nus_input(shown.ultra.epoch, shown.ultra.challenge, digits);
+        volatile char* p = digits; for (unsigned i = 0; i < 7; ++i) p[i] = 0;
+        break;
+    }
+    case UiAction::UltraScan: case UiAction::UltraUsb: case UiAction::UltraDisconnect:
+    case UiAction::UltraPeer0: case UiAction::UltraPeer1: case UiAction::UltraPeer2:
+    case UiAction::UltraPeer3: case UiAction::UltraPeer4: case UiAction::UltraPeer5: {
+        std::lock_guard<std::mutex> guard(state_mutex);
+        if (worker_running || session.pending || local_pending || local_runtime_active() || modes.pending() ||
+            release_unverified || ultra_request) { ui_message = "Finish the active operation before changing reader."; break; }
+        ultra_scan_epoch = shown.ultra.scan_epoch;
+        ultra_request = action == UiAction::UltraScan ? 1 : action == UiAction::UltraUsb ? 2 :
+            action == UiAction::UltraDisconnect ? 3 : 10 + int(action) - int(UiAction::UltraPeer0);
+        break;
+    }
     case UiAction::LocalRequest: submit_local(ui::take_local_intent()); break;
     case UiAction::ChooseConnected: request_mode(WorkMode::Connected); break;
     case UiAction::ChooseStandalone: request_mode(WorkMode::Standalone); break;
@@ -313,6 +339,25 @@ static void worker(void*) {
             delete work;
             worker_running = false;
         }
+        const int selection = ultra_request.exchange(0);
+        if (selection) {
+            bool idle;
+            {
+                std::lock_guard<std::mutex> guard(state_mutex);
+                idle = !session.pending && !local_pending && !local_runtime_active() && !modes.pending() && !release_unverified;
+                if (idle) worker_running = true;
+            }
+            if (idle) {
+                Status status = OK;
+                if (selection == 1 || selection == 2 || selection == 3) {
+                    status = hardware_select_transport(selection == 2 ? UltraTransport::Usb : UltraTransport::Bluetooth);
+                    if (status == OK && selection == 1 && !nus_scan()) status = BUSY;
+                } else if (ultra_transport() != UltraTransport::Bluetooth ||
+                    !nus_select(ultra_scan_epoch, size_t(selection - 10))) status = STALE_DATA;
+                if (status != OK && status != BUSY && status != STALE_DATA) latch_release_failure(status);
+                last_status = status; refresh_requested = true; worker_running = false;
+            }
+        }
         if (local_stop_requested.exchange(false)) {
             worker_running = true;
             const bool exit = local_exit_requested.exchange(false);
@@ -389,6 +434,7 @@ extern "C" void app_main() {
         state.busy = worker_running || state.request_id != 0 || local_pending || local_runtime_inventory();
         state.last_status = last_status;
         local_runtime_snapshot(state.local);
+        nus_snapshot(state.ultra); state.ultra_transport = ultra_transport();
         state.local.light_theme = light_theme; state.local.battery = battery;
         state.battery_percent = battery; state.internal_bytes = internal; state.external_bytes = external;
         state.usb_host = usb_host_state; state.light_theme = light_theme;

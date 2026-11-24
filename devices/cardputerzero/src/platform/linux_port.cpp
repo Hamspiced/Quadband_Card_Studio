@@ -106,12 +106,13 @@ class LinuxPort final : public ReaderPort {
         return data;
     }
     bool config_valid() {
+        if (!config_.ultra_ble_token.empty() && (!config_.ultra_serial.empty() || !config_.ble_session)) return false;
         const std::string paths[]{config_.hf_i2c, config_.uhf_serial, config_.ultra_serial};
         std::set<std::string> unique;
         for (const auto& path : paths) if (!path.empty()) {
             if (path[0] != '/' || path.find('\0') != std::string::npos || !unique.insert(path).second) return false;
         }
-        return !unique.empty();
+        return !unique.empty() || !config_.ultra_ble_token.empty();
     }
     void negotiate_ultra() {
         Bytes response;
@@ -200,7 +201,7 @@ public:
                     hardware.find("YRM") == std::string::npos) throw UNSUPPORTED;
                 attached_[1] = true;
             }
-            if (!config_.ultra_serial.empty()) { negotiate_ultra(); attached_[2] = true; }
+            if (!config_.ultra_serial.empty() || !config_.ultra_ble_token.empty()) { negotiate_ultra(); attached_[2] = true; }
             if (cancelled()) throw CANCELLED;
             detail_ = "Reader modules identified; RF scan requires an explicit action. Grove switching is OS-managed.";
             return OK;

@@ -34,5 +34,6 @@ UiAction touch(int x, int y) {
     M5.Display.endWrite();
     return action;
 }
+void take_ultra_pin(char (&digits)[7]) { controller.take_ultra_pin(digits); }
 local::Intent take_local_intent() { return controller.take_local_intent(); }
 }

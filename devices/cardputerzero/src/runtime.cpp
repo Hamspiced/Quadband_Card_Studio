@@ -1,12 +1,16 @@
 #include "runtime.hpp"
 #include "platform/discovery.hpp"
+#include "platform/bluetooth.hpp"
 #include <chrono>
 #include <cstdio>
 #include <stdexcept>
 
 namespace qb::zero {
-Runtime::Runtime(bool simulated, Factory factory, Discoverer discoverer)
-    : factory_(std::move(factory)), discoverer_(std::move(discoverer)) {
+Runtime::Runtime(bool simulated, Factory factory, Discoverer discoverer, BluetoothFactory bluetooth)
+    : factory_(std::move(factory)), discoverer_(std::move(discoverer)), bluetooth_factory_(std::move(bluetooth)) {
+    if (!bluetooth_factory_) bluetooth_factory_ = [](platform::BleSession::Observer observer, platform::Stop stop) {
+        return std::make_shared<platform::BleSession>(std::move(observer), std::move(stop));
+    };
     state_.simulated = simulated;
     if (!factory_) factory_ = [simulated](const ReaderConfig& config, Progress callback) {
         return simulated ? make_simulated_port(std::move(callback)) : make_linux_port(config, std::move(callback));
@@ -31,6 +35,8 @@ Runtime::~Runtime() {
 }
 bool Runtime::connect(const ReaderConfig& config) {
     std::lock_guard<std::mutex> guard(mutex_);
+    if (ble_cleanup_failed_ || (state_.connected &&
+        (!state_.config.ultra_ble_token.empty() || !config.ultra_ble_token.empty()))) return false;
     if (quit_ || state_.pending || state_.view.inventory || state_.view.review || state_.view.bulk_active) return false;
     queued_.emplace(); queued_->connection = true; queued_->config = config;
     state_.pending = true;
@@ -39,9 +45,29 @@ bool Runtime::connect(const ReaderConfig& config) {
 }
 bool Runtime::detect(const ReaderConfig& config) {
     std::lock_guard<std::mutex> guard(mutex_);
+    if (ble_cleanup_failed_ || (state_.connected && !state_.config.ultra_ble_token.empty())) return false;
     if (quit_ || state_.pending || state_.view.inventory || state_.view.review || state_.view.bulk_active) return false;
     queued_.emplace(); queued_->connection = queued_->discovery = true; queued_->config = config;
     state_.pending = true; state_.detail = "Identifying modules only; no RF/card scan.";
+    changed_.notify_all(); return true;
+}
+bool Runtime::scan_bluetooth() {
+    std::lock_guard<std::mutex> guard(mutex_);
+    if (quit_ || ble_cleanup_failed_ || state_.pending || state_.connected || state_.cleanup_failed ||
+        state_.view.inventory || state_.view.review || state_.view.bulk_active) return false;
+    queued_.emplace(); queued_->bluetooth = true;
+    state_.pending = true; state_.bluetooth.peers.clear(); state_.bluetooth.pin = false;
+    state_.bluetooth.state = "Checking Bluetooth runtime"; ++state_.bluetooth.revision;
+    changed_.notify_all(); return true;
+}
+bool Runtime::bluetooth_pin(const std::string& pin) {
+    std::lock_guard<std::mutex> guard(mutex_);
+    return ble_ && state_.bluetooth.pin && ble_->pin(pin);
+}
+bool Runtime::disconnect() {
+    std::lock_guard<std::mutex> guard(mutex_);
+    if (quit_ || state_.pending || state_.view.inventory || state_.view.review || state_.view.bulk_active) return false;
+    queued_.emplace(); queued_->disconnection = true; state_.pending = true;
     changed_.notify_all(); return true;
 }
 bool Runtime::submit(const local::Intent& intent) {
@@ -114,7 +140,49 @@ void Runtime::run() {
         }
         if (exit) { cleanup(); break; }
         try {
-            if (cancel && workbench_) {
+            if (job && job->disconnection) {
+                cleanup();
+                const bool ble_clean = !ble_ || ble_->disconnect() == OK;
+                std::unique_ptr<ReaderPort> previous;
+                std::shared_ptr<platform::BleSession> old_ble;
+                {
+                    std::lock_guard<std::mutex> guard(mutex_);
+                    previous = std::move(port_); old_ble = std::move(ble_);
+                    if (!ble_clean) ble_cleanup_failed_ = state_.cleanup_failed = true;
+                    state_.connected = false; state_.bluetooth = {};
+                    state_.bluetooth.state = "Disconnected; no automatic reconnect";
+                    if (!ble_clean) state_.bluetooth.state = "Bluetooth cleanup unverified; restart application";
+                    ++state_.bluetooth.revision;
+                    state_.config.ultra_ble_token.clear(); state_.config.ble_session.reset();
+                    auto revision = state_.view.revision + 1;
+                    state_.view = {}; state_.view.revision = revision;
+                    if (unverified_) state_.view.status = WRITE_UNVERIFIED;
+                }
+                workbench_.reset(); previous.reset();
+                if (old_ble) old_ble->shutdown();
+            } else if (job && job->bluetooth) {
+                discovery_stop_ = false;
+                auto next = bluetooth_factory_([this](const std::string& state) {
+                    std::lock_guard<std::mutex> guard(mutex_);
+                    state_.bluetooth.state = state; state_.bluetooth.pin = state == "pin";
+                    ++state_.bluetooth.revision;
+                }, [this] { return discovery_stop_.load(); });
+                {
+                    std::lock_guard<std::mutex> guard(mutex_); ble_ = next;
+                }
+                std::string detail;
+                auto status = next->preflight(detail);
+                std::vector<BlePeer> peers;
+                if (status == OK) {
+                    status = next->scan(peers);
+                    if (status != OK) detail = status == CANCELLED ? "Bluetooth scan canceled; scan again explicitly" :
+                        "Bluetooth scan failed; check adapter power, BlueZ permissions and runtime dependencies.";
+                }
+                std::lock_guard<std::mutex> guard(mutex_);
+                state_.bluetooth.peers = std::move(peers); state_.bluetooth.pin = false;
+                state_.bluetooth.state = status == OK ? "Select a reader; names are not trusted identity" : detail;
+                state_.detail = state_.bluetooth.state; ++state_.bluetooth.revision;
+            } else if (cancel && workbench_) {
                 workbench_->cancel();
                 if (cleanup()) {
                     {
@@ -124,6 +192,16 @@ void Runtime::run() {
                     workbench_->refresh(); publish();
                 }
             } else if (job && job->connection) {
+                discovery_stop_ = false;
+                if (!job->config.ultra_ble_token.empty()) {
+                    std::lock_guard<std::mutex> guard(mutex_);
+                    bool selected = false;
+                    for (const auto& peer : state_.bluetooth.peers)
+                        if (peer.token == job->config.ultra_ble_token) selected = true;
+                    if (!selected || !ble_) throw std::runtime_error("Expired Bluetooth selection.");
+                    job->config.ble_session = ble_;
+                    state_.bluetooth.peers.clear();
+                }
                 {
                     std::lock_guard<std::mutex> guard(mutex_);
                     if (cancel_epoch_ != epoch || quit_) throw std::runtime_error("Connection canceled.");
@@ -154,7 +232,7 @@ void Runtime::run() {
                     }
                 }
                 const bool have_endpoints = !job->config.hf_i2c.empty() || !job->config.uhf_serial.empty() ||
-                    !job->config.ultra_serial.empty() || state_.simulated;
+                    !job->config.ultra_serial.empty() || !job->config.ultra_ble_token.empty() || state_.simulated;
                 if (job->discovery && (!have_endpoints || !state_.discovery.completed)) {
                     std::lock_guard<std::mutex> guard(mutex_);
                     state_.view.status = unverified_ ? WRITE_UNVERIFIED : UNAVAILABLE;
@@ -185,6 +263,17 @@ void Runtime::run() {
                     std::lock_guard<std::mutex> guard(mutex_);
                     state_.connected = status == OK;
                     state_.detail = port_->detail();
+                    if (job->config.ble_session && job->config.ble_session->cleanup_unverified()) {
+                        ble_cleanup_failed_ = state_.cleanup_failed = true;
+                        state_.connected = false;
+                        state_.detail = "Bluetooth cleanup unverified; restart before any transport change.";
+                    }
+                    if (!job->config.ultra_ble_token.empty()) {
+                        state_.bluetooth.pin = false;
+                        state_.bluetooth.state = status == OK ? "Ready: validated Chameleon Ultra (Bluetooth)" :
+                            "Bluetooth validation failed; disconnect and scan again";
+                        ++state_.bluetooth.revision;
+                    }
                 }
                 publish();
                 if (status != OK) {
@@ -192,6 +281,11 @@ void Runtime::run() {
                     state_.view.status = status; ++state_.view.revision;
                 }
                 if (status != OK) cleanup();
+            } else if (cancel && ble_) {
+                ble_->shutdown();
+                std::lock_guard<std::mutex> guard(mutex_);
+                state_.bluetooth.peers.clear(); state_.bluetooth.pin = false;
+                state_.bluetooth.state = "Bluetooth canceled; scan again"; ++state_.bluetooth.revision;
             } else if (job && workbench_) {
                 bool allowed;
                 {
@@ -211,6 +305,18 @@ void Runtime::run() {
             } else if (inventory && workbench_) {
                 workbench_->tick(); publish();
                 if (!workbench_->view().inventory) cleanup();
+            } else if (ble_ && !ble_->healthy()) {
+                std::lock_guard<std::mutex> guard(mutex_);
+                if (!state_.config.ultra_ble_token.empty() && state_.connected) {
+                    ble_cleanup_failed_ = state_.cleanup_failed = true;
+                    state_.connected = false; state_.view.reader_present = false;
+                    state_.view.review = false; state_.view.review_token = 0;
+                    state_.view.status = unverified_ ? WRITE_UNVERIFIED : UNAVAILABLE;
+                    ++state_.view.revision;
+                    state_.bluetooth.state = "Bluetooth disconnected; cleanup unverified, restart required";
+                    state_.bluetooth.pin = false; state_.bluetooth.peers.clear();
+                    ++state_.bluetooth.revision;
+                }
             }
         } catch (...) {
             if (job && job->intent.command == local::Command::Confirm) unverified_ = true;
@@ -227,6 +333,13 @@ void Runtime::run() {
         }
         {
             std::lock_guard<std::mutex> guard(mutex_);
+            if (ble_ && ble_->cleanup_unverified()) {
+                ble_cleanup_failed_ = state_.cleanup_failed = true;
+                state_.connected = false; state_.bluetooth.pin = false; state_.bluetooth.peers.clear();
+                state_.view.reader_present = false; state_.view.review = false; state_.view.review_token = 0;
+                state_.bluetooth.state = "Bluetooth cleanup unverified; restart application";
+                state_.detail = state_.bluetooth.state;
+            }
             state_.pending = bool(queued_) || cancel_;
         }
         changed_.notify_all();

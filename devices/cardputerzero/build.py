@@ -72,7 +72,18 @@ def main():
     sources += list((ROOT / "firmware/cores3/main/standalone").glob("*.hpp"))
     sources += [ROOT / "firmware/cores3/main/standalone" / name for name in
                 ("controller.cpp", "hf.cpp", "ndef.cpp", "uhf.cpp", "lf.cpp")]
-    info = {"version": "0.3.0", "target": "linux-arm64" if args.zig else "linux" if args.device else "host-simulator",
+    shared = [ROOT / "desktop/src/quadband" / name for name in ("__init__.py", "bluetooth.py", "common.py")]
+    if not all(p.is_file() for p in shared):
+        raise RuntimeError("Shared Qt-free Bluetooth sources are required; integrate desktop Bluetooth primitives first.")
+    sources += shared
+    payload = build / "helper"
+    payload.mkdir(exist_ok=True)
+    for source in (DEVICE / "helper").glob("*.py"):
+        shutil.copy2(source, payload / source.name)
+    (payload / "quadband").mkdir(exist_ok=True)
+    for source in shared:
+        shutil.copy2(source, payload / "quadband" / source.name)
+    info = {"version": "0.4.0", "target": "linux-arm64" if args.zig else "linux" if args.device else "host-simulator",
             "lvgl": lock, "hardwareValidated": False,
             "binary": {"bytes": binary.stat().st_size, "sha256": hashlib.sha256(binary.read_bytes()).hexdigest()},
             "sources": {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(sources)}}

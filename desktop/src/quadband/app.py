@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 import sys
 import threading
+import time
 from PySide6.QtCore import Qt, QThread, Signal, QTimer, QSettings
 from PySide6.QtGui import QPixmap, QIcon, QPainter, QPalette, QColor
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QFormLayout,
@@ -27,6 +28,7 @@ class Worker(QThread):
     ndef_batch = Signal(bool, str)
     bridge = Signal(object)
     review_target = Signal(object)
+    reader_disconnected = Signal(str, str)
 
     def __init__(self):
         super().__init__()
@@ -34,6 +36,7 @@ class Worker(QThread):
         self.loop = asyncio.new_event_loop()
         self.service = Service(self.progress.emit)
         self.service.bridge_changed = self.bridge.emit
+        self.service.reader_disconnected = self.reader_disconnected.emit
         self.future = None
 
     def run(self):
@@ -162,6 +165,8 @@ class Connection(QWidget):
     def __init__(self, window, family, compact=False):
         super().__init__()
         self.window, self.family = window, family
+        self.linked = False
+        self.discovered_at = None
         self.mode = combo(['USB serial', 'Bluetooth'] if family == 'chameleon' else ['USB serial'] if family == 'uhf' else ['USB HID', 'USB serial', 'Bluetooth'])
         if family in ('chameleon', 'uhf'):
             self.mode.addItem('CoreS3')
@@ -202,6 +207,7 @@ class Connection(QWidget):
         self.mode.currentTextChanged.connect(self.mode_changed)
 
     def mode_changed(self, mode):
+        self.discovered_at = None
         self.baud.setEnabled(mode != 'CoreS3')
         if self.family == 'uhf' and mode == 'CoreS3':
             self.reader_profile.setCurrentText('M5Stack JRD-4035')
@@ -220,21 +226,42 @@ class Connection(QWidget):
             control.setEnabled(not module)
 
     def refresh(self):
+        if self.linked:
+            self.window.note('Disconnect the reader before changing its transport or scanning again.')
+            return
         mode = self.mode.currentText()
-        self.window.run(lambda: self.window.service.discover(mode, self.family), self.discovered, 'Finding readers…')
+        self.device.clear()
+        self.discovered_at = None
+        self.window.run(lambda: self.window.service.discover(mode, self.family),
+                        lambda devices: self.discovered(devices) if self.mode.currentText() == mode else None,
+                        'Scanning Bluetooth…' if mode == 'Bluetooth' else 'Finding readers…')
 
     def discovered(self, devices):
         self.device.clear()
         for value, title in devices:
             self.device.addItem(title, value)
+        self.discovered_at = time.monotonic()
+        if self.mode.currentText() == 'Bluetooth':
+            self.device.setCurrentIndex(-1)
+            self.device.setPlaceholderText('Select your Bluetooth reader')
         self.window.note(f'{len(devices)} reader(s) found. Select yours and connect.')
 
     def connect(self):
+        if self.linked:
+            self.window.note('Disconnect the current reader before reconnecting.')
+            return
         mode, device, baud, address = self.mode.currentText(), self.device.currentData(), int(self.baud.currentText()), self.address.value()
+        if mode == 'Bluetooth' and (self.discovered_at is None or time.monotonic() - self.discovered_at > 30):
+            self.device.clear()
+            self.window.note('Bluetooth results expired. Scan again and select your reader.')
+            return
         profile = self.reader_profile.currentText() if self.family == 'uhf' else 'Piswords UHF2'
         self.window.run(lambda: self.window.service.connect(self.family, mode, device, baud, address, profile), self.connected, 'Connecting reader…')
 
     def connected(self, label):
+        self.linked = True
+        for control in (self.mode, self.device, self.baud):
+            control.setEnabled(False)
         self.status.setText(label)
         self.window.note(label)
         if self.family == 'uhf':
@@ -252,15 +279,30 @@ class Connection(QWidget):
                 self.window.hf_readers.addItem('Chameleon Ultra · connected')
 
     def disconnect(self):
-        def disconnected(_):
-            self.status.setText('Disconnected')
-            if self.family == 'uhf':
-                self.reader_profile.setEnabled(True)
-                self.mode.setEnabled(True)
-                self.device.setEnabled(True)
-                self.baud.setEnabled(True)
-                self.address.setEnabled(self.reader_profile.currentText() == 'Piswords UHF2')
-        self.window.run(lambda: self.window.service.disconnect(self.family), disconnected, 'Disconnecting…')
+        self.window.run(lambda: self.window.service.disconnect(self.family),
+                        lambda _: self.disconnected(), 'Disconnecting…')
+
+    def disconnected(self, message='Disconnected'):
+        self.linked = False
+        self.status.setText(message)
+        for control in (self.mode, self.device, self.baud):
+            control.setEnabled(True)
+        if self.mode.currentText() == 'Bluetooth':
+            self.device.clear()
+            self.discovered_at = None
+        if self.family == 'uhf':
+            self.reader_profile.setEnabled(True)
+            self.address.setEnabled(self.reader_profile.currentText() == 'Piswords UHF2')
+        if self.family == 'chameleon':
+            readers = self.window.hf_readers
+            selected = readers.currentText() == 'Chameleon Ultra · connected'
+            index = readers.findText('Chameleon Ultra · connected')
+            if index >= 0:
+                readers.removeItem(index)
+            if selected:
+                readers.setCurrentIndex(-1)
+                self.window.hf_changed()
+            self.window.update_hf_controls()
 
 
 class CoreS3Connection(QWidget):
@@ -362,6 +404,7 @@ class MainWindow(QMainWindow):
         self.worker.ndef_batch.connect(self.ndef_batch_result)
         self.worker.bridge.connect(self.bridge_changed)
         self.worker.review_target.connect(self.review_ndef_target)
+        self.worker.reader_disconnected.connect(self.reader_disconnected)
         self.worker.start()
         self.worker.ready.wait(2)
         self.busy, self.stop_flag, self.callback, self.closing, self.closed_ready = False, None, None, False, False
@@ -1255,6 +1298,14 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'status'):
             self.status.setText(str(message))
             self.status.setStyleSheet('')
+
+    def reader_disconnected(self, family, message):
+        connection = {'chameleon': self.lf_connection, 'msr': self.msr_connection,
+                      'uhf': self.uhf_connection}.get(family)
+        if connection:
+            connection.disconnected(message)
+        self.snapshot = self.ndef_area = self.reader_snapshot = None
+        self.note(message)
 
     def finish(self):
         self.busy = False

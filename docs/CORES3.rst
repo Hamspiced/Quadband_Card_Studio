@@ -23,8 +23,8 @@ Connections and power
      - Port C, UART
      - 115200 baud, 8N1. The bridge uses the existing M100 protocol and does not change the module's stored baud, region or channel settings.
    * - Chameleon Ultra
-     - Main USB-C port, USB host/OTG
-     - Data-capable host cable/adapter and suitable independent power. The Chameleon's existing firmware is not replaced.
+     - Main USB-C host/OTG or selected Nordic UART BLE peer
+     - USB needs a data-capable host cable/adapter and suitable independent power. Bluetooth uses explicit local scan/selection and authenticated pairing. The Chameleon's existing firmware is not replaced.
    * - Card Studio computer
      - Bluetooth Low Energy
      - A single authenticated connection is shared across the three logical readers.
@@ -42,6 +42,29 @@ together. Use a charged battery or the board's supported independent input,
 check the combined RF/USB current budget, and do not assume a small adapter
 can power every attached device. No unconditional USB-output preference is
 restored on boot.
+
+Chameleon Bluetooth — development 0.5.0
+---------------------------------------
+
+Open Settings, then Ultra USB / Bluetooth. Scan explicitly and select the
+intended Nordic UART candidate. Enter the Ultra's configured six-digit
+passkey locally when requested; the keypad does not save or log it. The
+reader is ready only after secured GATT subscription and the existing
+firmware/model/command-capability handshake have succeeded.
+
+The Ultra link and the desktop bridge link have separate roles, epochs,
+authorization and persistent bond slots. At most one desktop and one
+selected Ultra link are admitted. Forget desktop bond does not erase the
+Ultra bond. Unknown or ambiguous stored bond roles fail closed rather than
+being evicted or reassigned automatically.
+
+Use USB explicitly to return to the cable transport. Handover requires an
+idle worker and verified release/teardown, advances the reader generation,
+and invalidates old selections/reviews. An uncertain mode restoration or
+disconnect blocks reuse until restart. Bluetooth selection does not enable
+USB VBUS. No automatic reconnect, transport fallback or command replay is
+performed. Software tests/builds do not verify actual simultaneous-link
+heap margins, pairing interoperability or radio coexistence.
 
 Browser installer
 -----------------

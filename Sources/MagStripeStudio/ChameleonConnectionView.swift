@@ -33,7 +33,7 @@ struct ChameleonConnectionView: View {
             HStack {
                 Button(model.connected ? "Disconnect" : "Connect") {
                     if model.connected { model.disconnect() } else { model.connect() }
-                }.disabled(model.busy || model.hfWorkflowBusy || (!model.connected && (model.link == .usb ? model.selectedPort.isEmpty : model.link == .bluetooth && model.selectedBluetooth == nil)))
+                }.disabled(model.busy || model.hfWorkflowBusy || (!model.connected && (model.link == .usb ? model.selectedPort.isEmpty : model.link == .bluetooth && !bluetooth.canConnect(model.selectedBluetooth))))
                 if model.link == .usb {
                     Button { model.refresh() } label: { Image(systemName: "arrow.clockwise") }
                         .help("Refresh Chameleon USB devices").disabled(locked)
@@ -57,7 +57,8 @@ struct ChameleonConnectionView: View {
             }
         }
         .accessibilityIdentifier("chameleonConnection")
-        .onChange(of: model.link) { _ in bluetooth.stop() }
+        .onChange(of: model.link) { _ in bluetooth.stop(); model.selectedBluetooth = nil }
+        .onChange(of: bluetooth.discoveryRevision) { _ in model.selectedBluetooth = nil }
         .onAppear { if model.autoDiscovery && model.ports.isEmpty { model.refresh() } }
     }
 }

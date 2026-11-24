@@ -194,6 +194,22 @@ A non-writing communication handshake succeeded with the user's physical MSR X6 
 Opt-in hardware checks are available by running tests with `QUADBAND_UHF_TEST_PORT=/dev/cu.usbmodem…` (the actual selected port) and/or `QUADBAND_ACR_TEST=1`. They scan/read only; they do not write tag data or change persistent reader settings. A UHF access filter is temporarily set to read the selected tag and then cleared. The ACR122U check needs a card present on drivers without direct-mode support.
 
 
+## Chameleon Bluetooth connections — development 1.2.0
+
+The Chameleon uses **Bluetooth Low Energy Nordic UART**, not Bluetooth Classic serial/RFCOMM. An operating system showing “paired” is not the same as Quadband identifying the reader and making its tools ready.
+
+1. Keep the Ultra awake and close other applications connected to it, including phone clients. Choose Bluetooth explicitly rather than changing transport during a reader operation.
+2. Run a fresh scan and select the intended Ultra. A matching name or advertised UART service is only a candidate; firmware, model and actual command capabilities must still validate.
+3. Complete the selected device's pairing prompt. Native macOS and portable Windows/Linux use the system pairing facilities. The Zero and CoreS3 provide local reader passkey entry; enter the Ultra's configured six-digit passkey, not a guessed/default value. Pairing codes are not application settings.
+4. Wait for validated readiness before opening a reader workspace. Scanning, pairing, subscribing and validating are separate states. Connecting does not automatically scan or write a card.
+5. After a timeout or disconnect, reconnect explicitly and read the target again. Do not interpret a lost acknowledgement as an unchanged card or retry a write automatically.
+
+For **CardputerZero**, the Bluetooth helper requires Linux Python, BlueZ, Bleak and D-Bus dependencies; see the device package instructions. It runs as the ordinary user and does not install a root GUI, change USB roles or replace the default system pairing agent. Existing USB detection remains available. USB Host mode is required only for a USB peripheral, not for the Bluetooth reader link.
+
+For **CoreS3**, the desktop-facing bridge link and the selected Ultra Bluetooth link have different roles and authorization. Selecting Bluetooth for the Ultra does not enable USB host power or grant desktop ownership of standalone operations. Only one Chameleon transport is active at a time; changing it invalidates old reader selections and write reviews. See the [CoreS3 setup](CORES3.rst).
+
+If pairing fails, distinguish an unavailable/off adapter, denied application permission, a refused or expired passkey prompt, another client holding the Ultra, and unsupported firmware/security. Do not disable the Ultra's pairing protection, clear all bonds, reset the adapter or flash firmware as a routine connection workaround. Software tests and successful builds do not establish physical pairing on every OS or reader firmware.
+
 ## Chameleon Ultra · LF and HF (v2.0 password-free writes)
 
 The **Chameleon Ultra sidebar panel** connects a Chameleon Ultra over USB (115200 baud) or Bluetooth (Nordic UART). Choose the device and connect; Bluetooth pairing, when enabled on the Chameleon, is handled by macOS using your configured PIN. Close competing Chameleon apps before connecting. In v1.6.1 the app first reads the firmware’s protected Bluetooth battery characteristic before subscribing to its UART, allowing macOS to initiate pairing through an authenticated GATT read. It allows up to 90 seconds for setup/PIN entry, supports firmware without that battery service, and never disables pairing or clears bonds automatically. If the device battery is low, keep USB connected for power. Official 2.x firmware is checked at connection time, and the reported command capabilities determine available formats. Chameleon Lite lacks reader hardware and is rejected.

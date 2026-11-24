@@ -60,7 +60,9 @@ bool TouchGate::permit(const UiSnapshot& state, bool pressed, bool touching) {
         (uint64_t(state.confirm_bonds) << 5) | (uint64_t(state.pairing_pending) << 6) |
         (uint64_t(state.confirm_target) << 7) | (uint64_t(state.pairing_code) << 10);
     const uint64_t local_review = state.local.review ? state.local.review_token : 0;
-    if (key != presentation_ || state.pairing_challenge != challenge_ || local_review != local_review_) {
+    if (key != presentation_ || state.pairing_challenge != challenge_ || local_review != local_review_ ||
+        state.ultra.epoch != ultra_epoch_ || state.ultra.challenge != ultra_challenge_) {
+        ultra_epoch_ = state.ultra.epoch; ultra_challenge_ = state.ultra.challenge;
         presentation_ = key; challenge_ = state.pairing_challenge; local_review_ = local_review; armed_ = false;
         return false;
     }

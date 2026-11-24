@@ -56,7 +56,7 @@ struct Fixture {
     std::vector<local::Intent> intents;
     std::vector<ReaderConfig> connections;
     std::vector<ReaderConfig> detections;
-    unsigned stops = 0, quits = 0;
+    unsigned stops = 0, quits = 0, ble_scans = 0, disconnects = 0, pin_length = 0;
     std::unique_ptr<ApplicationUi> ui;
     Fixture() {
         s.connected = true; s.view.reader_present = true; s.simulated = true;
@@ -71,6 +71,9 @@ struct Fixture {
         cb.stop = [this] { ++stops; };
         cb.quit = [this] { ++quits; };
         cb.detect = [this](const ReaderConfig& c) { detections.push_back(c); return true; };
+        cb.bluetooth_scan = [this] { ++ble_scans; return true; };
+        cb.disconnect = [this] { ++disconnects; return true; };
+        cb.bluetooth_pin = [this](const std::string& pin) { pin_length = unsigned(pin.size()); return true; };
         ui = std::make_unique<ApplicationUi>(root, std::move(cb)); ui->update(s);
     }
     ~Fixture() { ui.reset(); CHECK(lv_obj_get_child_count(root) == 0); }
@@ -127,6 +130,61 @@ struct Fixture {
     }
 };
 
+void bluetooth_selection_and_pin() {
+    Fixture f;
+    f.s.connected = false; f.s.simulated = false; f.publish();
+    f.tap(Key::Character, 'S'); f.choose("Connections"); f.choose("Chameleon Bluetooth");
+    f.choose("Scan Bluetooth (6 seconds / max 16)");
+    CHECK(f.ble_scans == 1 && f.connections.empty() && f.intents.empty());
+    f.s.bluetooth.peers = {{"aaaaaaaaaaaaaaaa", "Reader One"}, {"bbbbbbbbbbbbbbbb", "Reader Two"}};
+    f.publish();
+    CHECK(f.connections.empty());
+    f.choose("Connect: Reader Two [2]");
+    CHECK(f.connections.size() == 1 && f.connections[0].ultra_ble_token == "bbbbbbbbbbbbbbbb");
+    CHECK(f.connections[0].ultra_serial.empty());
+    f.s.pending = true; f.s.bluetooth.pin = true; f.publish();
+    f.choose("Enter Bluetooth PIN"); f.type(std::string(6, '0'));
+    auto* area = find_type(f.root, &lv_textarea_class); CHECK(area);
+    CHECK(lv_textarea_get_password_mode(area));
+    CHECK(!visible_secret(f.root, std::string(6, '0')));
+    f.publish(); CHECK(find_type(f.root, &lv_textarea_class));
+    f.tap(Key::Enter); CHECK(f.pin_length == 6 && !find_type(f.root, &lv_textarea_class));
+    f.choose("Enter Bluetooth PIN"); f.type("00"); f.tap(Key::Escape);
+    CHECK(f.stops == 1 && !find_type(f.root, &lv_textarea_class));
+    f.s.bluetooth.pin = false; f.s.pending = false; f.s.bluetooth.peers.clear(); f.publish();
+    f.s.connected = true; f.s.config.ultra_ble_token = "bbbbbbbbbbbbbbbb"; f.publish();
+    f.choose("Disconnect readers (no fallback)"); CHECK(f.disconnects == 1);
+    CHECK(f.intents.empty());
+}
+void ultra_discovery_status() {
+    Fixture f;
+    f.s.simulated = false; f.s.config.ultra_serial = "/dev/ttyACM7"; f.s.config.ultra_autodetected = true;
+    f.s.discovery.attempted = f.s.discovery.completed = true; f.s.discovery.sequence = 1;
+    f.s.discovery.config = f.s.config;
+    auto& ultra = f.s.discovery.devices[unsigned(Peripheral::Ultra)];
+    ultra = {Detection::Detected,"/dev/ttyACM7","Chameleon Ultra 2.3 (USB)",""};
+    f.publish();
+    CHECK(find_label(f.root,"[3] LF / Chameleon  Detected"));
+    f.tap(Key::Character,'3'); f.command(Command::OpenLf);
+    CHECK(f.intents.size() == 1);
+    f.publish(); f.tap(Key::Character,'S'); f.choose("Hardware");
+    CHECK(find_label(f.root,"USB Chameleon Ultra: Detected"));
+    CHECK(find_label(f.root,"Chameleon Ultra 2.3 (USB)"));
+    CHECK(f.intents.size() == 1 && f.connections.empty() && f.detections.empty());
+    f.tap(Key::Escape);
+    f.intents.clear();
+    for (auto state : {Detection::Missing,Detection::Busy,Detection::Permission,Detection::Unsupported}) {
+        ultra.state = state; f.publish(); f.tap(Key::Character,'3');
+        CHECK(f.intents.empty());
+    }
+    ultra.state = Detection::Manual; f.publish(); f.tap(Key::Character,'3');
+    f.command(Command::OpenLf); f.publish();
+    f.tap(Key::Character,'S'); f.choose("Connections");
+    f.choose("Ultra USB serial: /dev/ttyACM7"); f.replace("/dev/ttyACM9");
+    f.choose("Connect configured readers");
+    CHECK(f.connections.size() == 1 && f.connections[0].ultra_serial == "/dev/ttyACM9");
+    CHECK(!f.connections[0].ultra_autodetected);
+}
 void navigation_and_connections() {
     Fixture f;
     auto* shell = lv_obj_get_child(f.root, 0);
@@ -153,6 +211,17 @@ void navigation_and_connections() {
     f.choose("[R] Read"); f.command(Command::HfRead); f.publish();
     f.choose("Go to unit"); f.replace("255"); f.set(Field::HfUnit, "255");
     f.tap(Key::Escape); f.tap(Key::Escape); f.command(Command::Exit);
+}
+void arrow_letters_remain_editor_text() {
+    Fixture f;
+    f.tap(Key::Character,'S'); f.choose("Connections");
+    f.choose("UHF serial path: ");
+    f.type("fxzcFXZC");
+    auto* area=find_type(f.root,&lv_textarea_class); CHECK(area);
+    CHECK(std::string(lv_textarea_get_text(area))=="fxzcFXZC");
+    f.tap(Key::Enter);
+    f.button("UHF serial path: fxzcFXZC");
+    CHECK(f.intents.empty() && f.connections.empty() && f.detections.empty());
 }
 void secrets_and_text() {
     Fixture f; f.tool(Tool::Hf); f.choose("[A] Auth");
@@ -540,11 +609,11 @@ int main() {
     lv_display_set_color_format(display, LV_COLOR_FORMAT_ARGB8888);
     lv_display_set_buffers(display, pixels.data(), nullptr, pixels.size(), LV_DISPLAY_RENDER_MODE_FULL);
     lv_display_set_flush_cb(display, flush);
-    navigation_and_connections(); secrets_and_text(); ndef_pagination(); bulk_ui(); uhf_and_lf();
+    navigation_and_connections(); arrow_letters_remain_editor_text(); secrets_and_text(); ndef_pagination(); uhf_and_lf(); bulk_ui();
     live_inventory_updates(); review_replay_and_busy(); idle_and_theme(); discovered_defaults_and_rescan();
     direct_shortcuts_and_focus(); bounded_review_and_warning(); unavailable_readers_and_protected_units();
-    lf_capture_fixed_primary();
+    lf_capture_fixed_primary(); ultra_discovery_status(); bluetooth_selection_and_pin();
     CHECK(flushes > 0);
     lv_display_delete(display); lv_deinit();
-    std::puts("PASS: 13 device-free LVGL UI suites (config, masking, NDEF/bulk, UHF/LF, live tags, review/busy, idle/theme, discovery, shortcuts/focus, bounded review/warnings)");
+    std::puts("PASS: 15 device-free LVGL UI suites (config, text navigation isolation, masking, NDEF/bulk, UHF/LF, live tags, review/busy, idle/theme, discovery/USB Ultra, shortcuts/focus, bounded review/warnings)");
 }

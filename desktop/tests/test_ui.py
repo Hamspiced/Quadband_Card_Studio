@@ -80,6 +80,69 @@ def test_sidebar_connections_disabled_during_operations(window, monkeypatch):
     assert window.connection_panel.isEnabled()
 
 
+def test_bluetooth_refresh_clears_old_peers_and_requires_explicit_selection(window, monkeypatch):
+    connection = window.lf_connection
+    connection.mode.setCurrentText('Bluetooth')
+    connection.device.addItem('Stale peer', 'old')
+    monkeypatch.setattr(window.worker, 'submit', lambda factory: None)
+    connection.refresh()
+    assert connection.device.count() == 0
+    assert connection.discovered_at is None
+    window.done([('one', 'First candidate'), ('two', 'Second candidate')])
+    assert connection.device.count() == 2
+    assert connection.device.currentData() is None
+    connection.device.setCurrentIndex(1)
+    assert connection.device.currentData() == 'two'
+    connection.discovered_at -= 31
+    connection.connect()
+    assert 'expired' in window.status.text()
+    assert connection.device.count() == 0
+    assert not window.busy
+
+
+def test_idle_bluetooth_loss_removes_shared_hf_reader_and_unlocks_transport(window):
+    connection = window.lf_connection
+    connection.mode.setCurrentText('Bluetooth')
+    connection.discovered([('peer', 'Selected reader')])
+    connection.device.setCurrentIndex(0)
+    connection.connected('Validated Chameleon')
+    window.hf_readers.setCurrentText('Chameleon Ultra · connected')
+    assert not connection.mode.isEnabled()
+    window.reader_disconnected('chameleon', 'Bluetooth disconnected. Scan and reconnect.')
+    assert connection.status.text().startswith('Bluetooth disconnected')
+    assert window.hf_readers.findText('Chameleon Ultra · connected') == -1
+    assert window.hf_readers.currentIndex() == -1
+    assert not window.hf_read_button.isEnabled()
+    assert not window.hf_write_records_button.isEnabled()
+    assert connection.mode.isEnabled() and connection.device.count() == 0
+    assert not connection.linked
+
+
+def test_bluetooth_pairing_cancel_does_not_leave_a_ready_reader(window, app, monkeypatch):
+    import asyncio
+    from quadband import transports
+    entered = __import__('threading').Event()
+    async def pairing(*args, **kwargs):
+        window.worker.progress.emit('Pairing Bluetooth; complete the system prompt.')
+        entered.set()
+        await asyncio.Event().wait()
+    monkeypatch.setattr(transports.BLEChannel, 'connect', pairing)
+    connection = window.lf_connection
+    connection.mode.setCurrentText('Bluetooth')
+    connection.discovered([('peer', 'Selected reader')])
+    connection.device.setCurrentIndex(0)
+    connection.connect()
+    assert entered.wait(2)
+    app.processEvents()
+    assert 'Pairing' in window.status.text()
+    window.stop()
+    wait_idle(window, app)
+    assert window.service.chameleon is None
+    assert not connection.linked
+    assert window.hf_readers.findText('Chameleon Ultra · connected') == -1
+    assert 'stopped' in window.status.text()
+
+
 @pytest.mark.parametrize('mode,pending', [('home', False), ('standalone', False), ('connected', True)])
 def test_bridge_modes_remove_readers_and_clear_authentication(window, mode, pending):
     import copy

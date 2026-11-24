@@ -37,7 +37,7 @@ const char* const lf_names[] = {
 enum class Page {
     Home, Connections, Memory, Auth, NtagAuth, Ndef, Kinds, Fields, Records,
     Copy, Tags, UhfMemory, UhfData, Power, Lf, Formats, LfId, Hardware,
-    Settings, About, HfEdit, UhfBank, UhfRange, UhfPassword, UhfEpc, Bulk, Drafts
+    Settings, About, HfEdit, UhfBank, UhfRange, UhfPassword, UhfEpc, Bulk, Drafts, Bluetooth
 };
 void wipe(std::string& s) { local::secure_zero(s.data(), s.size()); s.clear(); }
 }
@@ -214,11 +214,13 @@ struct ApplicationUi::State {
         if (snapshot.cleanup_failed) return "Cleanup failed";
         if (!snapshot.connected) return "Not connected";
         if (snapshot.simulated) return "SIM";
+        if (index == 2 && !snapshot.config.ultra_ble_token.empty()) return "Bluetooth";
         const std::string endpoints[]{snapshot.config.hf_i2c, snapshot.config.uhf_serial, snapshot.config.ultra_serial};
         if (endpoints[index].empty()) return "Not configured";
-        if (index < 2 && snapshot.discovery.completed) {
-            const auto& device = snapshot.discovery.devices[index == 0 ? 1 : 0];
-            const auto& discovered = index == 0 ? snapshot.discovery.config.hf_i2c : snapshot.discovery.config.uhf_serial;
+        if (snapshot.discovery.completed) {
+            const auto& device = snapshot.discovery.devices[index == 0 ? 1 : index == 1 ? 0 : unsigned(Peripheral::Ultra)];
+            const auto& discovered = index == 0 ? snapshot.discovery.config.hf_i2c :
+                index == 1 ? snapshot.discovery.config.uhf_serial : snapshot.discovery.config.ultra_serial;
             if (discovered == endpoints[index] && device.endpoint == endpoints[index] && device.state != Detection::Unchecked)
                 return platform::detection_name(device.state);
         }
@@ -227,11 +229,13 @@ struct ApplicationUi::State {
     bool reader_available(unsigned index) const {
         if (!snapshot.connected || snapshot.cleanup_failed) return false;
         if (snapshot.simulated) return true;
+        if (index == 2 && !snapshot.config.ultra_ble_token.empty()) return true;
         const std::string endpoints[]{snapshot.config.hf_i2c, snapshot.config.uhf_serial, snapshot.config.ultra_serial};
         if (endpoints[index].empty()) return false;
-        if (index < 2 && snapshot.discovery.completed) {
-            const auto& device = snapshot.discovery.devices[index == 0 ? 1 : 0];
-            const auto& discovered = index == 0 ? snapshot.discovery.config.hf_i2c : snapshot.discovery.config.uhf_serial;
+        if (snapshot.discovery.completed) {
+            const auto& device = snapshot.discovery.devices[index == 0 ? 1 : index == 1 ? 0 : unsigned(Peripheral::Ultra)];
+            const auto& discovered = index == 0 ? snapshot.discovery.config.hf_i2c :
+                index == 1 ? snapshot.discovery.config.uhf_serial : snapshot.discovery.config.ultra_serial;
             if (discovered == endpoints[index] && device.endpoint == endpoints[index] && device.state != Detection::Unchecked &&
                 device.state != Detection::Detected && device.state != Detection::Manual) return false;
         }
@@ -255,7 +259,11 @@ struct ApplicationUi::State {
         });
         info("Right Grove = UHF UART. Hat Grove = HF I2C.");
         info("No pinmux changes or automatic card scans.");
-        info("Ultra uses USB host. No broad bus probe.");
+        info("Ultra USB: Host switch, USB-A/USB-C1.");
+        nav("Chameleon Bluetooth", Page::Bluetooth);
+        row("Disconnect readers (no fallback)", [this] {
+            if (callbacks.disconnect) callbacks.disconnect();
+        }, snapshot.connected || !snapshot.bluetooth.peers.empty());
         edit("HF I2C path: " + config.hf_i2c, config.hf_i2c, 127, false, false, false,
              [this](const std::string& s) { config.hf_i2c = s; });
         edit("HF address (0x28): " + number(config.hf_address), number(config.hf_address),
@@ -275,7 +283,10 @@ struct ApplicationUi::State {
                  else error = "Baud must be 1-4000000.";
              });
         edit("Ultra USB serial: " + config.ultra_serial, config.ultra_serial, 127, false, false, false,
-             [this](const std::string& s) { config.ultra_serial = s; });
+             [this](const std::string& s) {
+                 config.ultra_serial = s; config.ultra_autodetected = false;
+                 config.ultra_ble_token.clear(); config.ble_session.reset();
+             });
         row("Connect configured readers", [this] {
             if ((!config.hf_i2c.empty() && !config.grove_i2c_confirmed) ||
                 (config.hf_i2c.empty() && config.uhf_serial.empty() && config.ultra_serial.empty() && !snapshot.simulated)) {
@@ -564,9 +575,19 @@ struct ApplicationUi::State {
         footer = error.empty() ? (v.message[0] ? text(v.message) : snapshot.detail) : error;
         if (snapshot.cleanup_failed) footer = "CLEANUP UNVERIFIED - reconnect/restart. " + snapshot.detail;
         else if (sticky_write) footer = "WRITE UNVERIFIED - no auto retry. " + footer;
+        if (snapshot.bluetooth.pin) {
+            title = "Pair selected reader";
+            info("Enter the reader's six-digit PIN locally.");
+            edit("Enter Bluetooth PIN", "", 6, true, true, false, [this](const std::string& value) {
+                if (callbacks.bluetooth_pin) callbacks.bluetooth_pin(value);
+            });
+            row("Cancel pairing", [this] { if (callbacks.stop) callbacks.stop(); });
+            return;
+        }
         if (busy()) {
             if (v.inventory) { live_inventory(); return; }
             title = "Working / pending";
+            info(snapshot.bluetooth.state);
             info(text(v.message));
             info(number(v.done) + "/" + number(v.total) + " | " + number(std::min(64U, v.tag_count)) + " tags");
             row("[R] Stop", [this] { if (callbacks.stop) callbacks.stop(); }, true, false, "stop", 1);
@@ -601,10 +622,39 @@ struct ApplicationUi::State {
             nav("[S] Settings", Page::Settings);
         }
         else if (page == Page::Connections) connections();
+        else if (page == Page::Bluetooth) {
+            title = "Chameleon Bluetooth (explicit choice)";
+            info(snapshot.bluetooth.state);
+            row("Scan Bluetooth (6 seconds / max 16)", [this] {
+                if (callbacks.bluetooth_scan && callbacks.bluetooth_scan()) {
+                    submitted = true; submitted_revision = snapshot.view.revision;
+                    submitted_pending = snapshot.pending;
+                }
+                render();
+            }, !snapshot.connected && !snapshot.cleanup_failed);
+            info("Disconnect first to switch USB / Bluetooth.");
+            for (size_t i = 0; i < snapshot.bluetooth.peers.size(); ++i) {
+                auto peer = snapshot.bluetooth.peers[i];
+                row("Connect: " + peer.name + " [" + number(unsigned(i + 1)) + "]", [this, peer] {
+                    config.ultra_serial.clear(); config.ultra_autodetected = false;
+                    config.ultra_ble_token = peer.token; config.ble_session.reset();
+                    if (callbacks.connect && callbacks.connect(config)) {
+                        submitted = true; submitted_revision = snapshot.view.revision;
+                        submitted_pending = snapshot.pending;
+                    }
+                    render();
+                }, !snapshot.connected);
+            }
+            row("Disconnect readers (no fallback)", [this] {
+                if (callbacks.disconnect) callbacks.disconnect();
+            }, snapshot.connected || !snapshot.bluetooth.peers.empty());
+            nav("Connections", Page::Connections);
+        }
         else if (page == Page::Hardware) {
             title = "Detected modules (not cards)";
-            const char* names[]{"Right Grove UHF","External RFID / RFID2","Cap CC1101","Cap NFC"};
-            for (unsigned i = 0; i < 4; ++i) {
+            info("Bluetooth: " + snapshot.bluetooth.state);
+            const char* names[]{"Right Grove UHF","External RFID / RFID2","Cap CC1101","Cap NFC","USB Chameleon Ultra"};
+            for (unsigned i = 0; i < snapshot.discovery.devices.size(); ++i) {
                 const auto& item = snapshot.discovery.devices[i];
                 row(std::string(names[i]) + ": " + platform::detection_name(item.state), [] {}, true, false, "hardware:" + number(i));
                 if (!item.endpoint.empty()) info(item.endpoint);
@@ -727,7 +777,7 @@ struct ApplicationUi::State {
         if (snapshot.cleanup_failed || sticky_write) lv_obj_set_style_text_color(status, color(0xff8ba0, 0xb92742), 0);
         label(shell, snapshot.view.review ? "PgUp/Dn details | Enter decision | Esc cancel" :
             busy() ? "R/Esc stop | Tab inspect | Ctrl+C stop" :
-            "1 HF  2 UHF  3 LF | S settings | Esc back", 7, 158, 306, &lv_font_montserrat_10);
+            "Fn+F/X/Z/C / Tab | 1/2/3 | Esc back", 7, 158, 306, &lv_font_montserrat_10);
         if (!focus_ids.empty()) {
             auto* target = focus_ids.front().first;
             if (same_page) for (const auto& item : focus_ids) if (item.second == focused) target = item.first;
@@ -791,7 +841,8 @@ struct ApplicationUi::State {
         if (new_review) {
             clear_editor(); review_released = false; painted_rows.clear(); painted_title.clear();
         }
-        if (busy() || snapshot.cleanup_failed || old_tool != s.view.tool) clear_editor();
+        if ((busy() && !snapshot.bluetooth.pin) || snapshot.cleanup_failed || old_tool != s.view.tool ||
+            (editing && edit_title == "Enter Bluetooth PIN" && !snapshot.bluetooth.pin)) clear_editor();
         if (old_tool != s.view.tool) {
             page = s.view.tool == Tool::Hf ? Page::Memory : s.view.tool == Tool::Uhf ? Page::Tags :
                    s.view.tool == Tool::Lf ? Page::Lf : Page::Home;
@@ -845,6 +896,17 @@ struct ApplicationUi::State {
         if (e.repeat || !held.insert(key_id).second) return;
         if (e.key == Key::Quit) { if (callbacks.quit) callbacks.quit(); return; }
         if (e.key == Key::Stop) { if (callbacks.stop) callbacks.stop(); return; }
+        if (editing && snapshot.bluetooth.pin) {
+            if (e.key == Key::Escape) { clear_editor(); if (callbacks.stop) callbacks.stop(); render(); }
+            else edit_key(e);
+            return;
+        }
+        if (snapshot.bluetooth.pin) {
+            if (e.key == Key::Escape) { if (callbacks.stop) callbacks.stop(); }
+            else if (e.key == Key::Enter) activate();
+            else navigate(e);
+            return;
+        }
         if (busy()) {
             if (e.key == Key::Escape) { if (callbacks.stop) callbacks.stop(); return; }
             if (e.key == Key::Character && (e.character == 'r' || e.character == 'R')) {
@@ -875,8 +937,9 @@ struct ApplicationUi::State {
             }
             const std::string hint = std::string("[") + c + "]";
             for (const auto& r : rows) {
-                if (r.enabled && r.activate && r.label.find(hint) == 0) {
-                    auto invoke = r.activate; invoke(); return;
+                if (r.label.find(hint) == 0) {
+                    if (r.enabled && r.activate) { auto invoke = r.activate; invoke(); }
+                    return;
                 }
             }
             if (c == 'W') {
@@ -884,6 +947,7 @@ struct ApplicationUi::State {
                     auto invoke = r.activate; invoke(); return;
                 }
             }
+            navigate(e);
             return;
         }
         if (e.key == Key::Escape) {
@@ -902,20 +966,30 @@ struct ApplicationUi::State {
         if (obj) lv_obj_send_event(obj, LV_EVENT_CLICKED, nullptr);
     }
     void navigate(const KeyEvent& e) {
-        if (details && (e.key == Key::PageDown || e.key == Key::PageUp)) {
-            lv_obj_scroll_by(details, 0, e.key == Key::PageDown ? -55 : 55, LV_ANIM_OFF); return;
+        auto key = e.key;
+        if (key == Key::Character) {
+            switch (std::toupper(static_cast<unsigned char>(e.character))) {
+            case 'F': key = Key::Up; break;
+            case 'X': key = Key::Down; break;
+            case 'Z': key = Key::Left; break;
+            case 'C': key = Key::Right; break;
+            default: return;
+            }
         }
-        if (e.key == Key::Up || e.key == Key::Left || (e.key == Key::Tab && e.shift))
+        if (details && (key == Key::PageDown || key == Key::PageUp)) {
+            lv_obj_scroll_by(details, 0, key == Key::PageDown ? -55 : 55, LV_ANIM_OFF); return;
+        }
+        if (key == Key::Up || key == Key::Left || (key == Key::Tab && e.shift))
             lv_group_focus_prev(group);
-        else if (e.key == Key::Down || e.key == Key::Right || e.key == Key::Tab)
+        else if (key == Key::Down || key == Key::Right || key == Key::Tab)
             lv_group_focus_next(group);
-        else if (e.key == Key::Home && lv_group_get_obj_count(group))
+        else if (key == Key::Home && lv_group_get_obj_count(group))
             lv_group_focus_obj(lv_group_get_obj_by_index(group, 0));
-        else if (e.key == Key::End && lv_group_get_obj_count(group))
+        else if (key == Key::End && lv_group_get_obj_count(group))
             lv_group_focus_obj(lv_group_get_obj_by_index(group, lv_group_get_obj_count(group) - 1));
-        else if (e.key == Key::PageDown || e.key == Key::PageUp)
+        else if (key == Key::PageDown || key == Key::PageUp)
             for (unsigned i = 0; i < 3; ++i)
-                e.key == Key::PageDown ? lv_group_focus_next(group) : lv_group_focus_prev(group);
+                key == Key::PageDown ? lv_group_focus_next(group) : lv_group_focus_prev(group);
     }
 };
 

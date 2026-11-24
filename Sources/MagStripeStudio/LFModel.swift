@@ -85,14 +85,18 @@ import MagStripeCore
             let client = ChameleonClient(transport:value)
             do {
                 let info = try await client.identify(); try Task.checkCancellation()
+                guard self.connection === value else { throw StripeError("Chameleon disconnected while validating. Scan and reconnect.") }
                 self.client = client; self.info = info; self.connected = true; self.format = nil
                 self.note("Chameleon Ultra connected by \(link.rawValue). Ready to scan.",.success)
             } catch { value.close(); self.connection = nil; self.client = nil; self.info = nil; self.connected = false; throw error }
         }
     }
     private func observeDisconnect(_ value: ChameleonConnection) {
-        value.onDisconnect = { [weak self] error in
-            self?.connected = false; self?.preview = nil; self?.note(error.localizedDescription,.error)
+        value.onDisconnect = { [weak self, weak value] error in
+            guard let self, let value, self.connection === value else { return }
+            self.connectionIdentity = UUID(); self.connected = false; self.preview = nil
+            self.info = nil; self.client = nil; self.connection = nil; self.selectedBluetooth = nil
+            self.bluetooth.close(); self.note(error.localizedDescription,.error)
         }
     }
     func disconnect() {
@@ -106,7 +110,7 @@ import MagStripeCore
         }
     }
     func close() {
-        connectionIdentity = UUID(); connection?.close(); connection = nil; bridgeConnection?.close(); bridgeConnection = nil; client = nil; bluetooth.close(); connected = false; info = nil; preview = nil
+        connectionIdentity = UUID(); connection?.close(); connection = nil; bridgeConnection?.close(); bridgeConnection = nil; client = nil; bluetooth.close(); connected = false; info = nil; preview = nil; selectedBluetooth = nil
     }
     func cancel() {
         generation = UUID(); operation?.cancel(); operation = nil; close(); busy = false

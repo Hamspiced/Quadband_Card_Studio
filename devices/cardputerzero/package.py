@@ -85,6 +85,9 @@ def package(build, output, zig_root=None):
                 not any(part in {".build", "build", "__pycache__"} for part in path.relative_to(DEVICE).parts)}
     if not expected <= set(provenance["sources"]):
         raise ValueError("Device source tree changed since build; refresh build provenance.")
+    shared = {f"desktop/src/quadband/{name}" for name in ("__init__.py", "bluetooth.py", "common.py")}
+    if not shared <= set(provenance["sources"]):
+        raise ValueError("Shared Bluetooth payload is absent from source provenance.")
     for name, digest in provenance["sources"].items():
         path = (ROOT / name).resolve()
         if not path.is_relative_to(ROOT) or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
@@ -92,6 +95,11 @@ def package(build, output, zig_root=None):
     files = {}
     doc = "usr/share/doc/quadband-cardputerzero/"
     files["usr/lib/quadband-cardputerzero/quadband-cardputerzero"] = (binary, 0o755)
+    for source in (DEVICE / "helper").glob("*.py"):
+        files["usr/lib/quadband-cardputerzero/helper/" + source.name] = (source.read_bytes(), 0o644)
+    for source in shared:
+        files["usr/lib/quadband-cardputerzero/helper/quadband/" + Path(source).name] = (
+            (ROOT / source).read_bytes(), 0o644)
     files["usr/bin/quadband-cardputerzero"] = ((DEVICE / "packaging/quadband-cardputerzero").read_bytes(), 0o755)
     files["usr/lib/udev/rules.d/90-quadband-grove-power.rules"] = (
         (DEVICE / "packaging/90-quadband-grove-power.rules").read_bytes(), 0o644)
@@ -131,8 +139,9 @@ def package(build, output, zig_root=None):
     checksums = "".join(hashlib.sha256(data).hexdigest() + "  " + name + "\n"
                         for name, (data, _) in sorted(files.items()))
     files[doc + "SHA256SUMS.txt"] = (checksums.encode(), 0o644)
-    control = ("Package: quadband-cardputerzero\nVersion: 0.3.0\nSection: utils\nPriority: optional\n"
+    control = ("Package: quadband-cardputerzero\nVersion: 0.4.0\nSection: utils\nPriority: optional\n"
                "Architecture: arm64\nMaintainer: Midwest Gadgets\n"
+               "Depends: python3 (>= 3.11), bluez, python3-bleak (>= 0.22.3), python3-dbus-fast\n"
                "Description: Quadband Card Studio handheld card workbench\n"
                " Keyboard-first HF/NFC, UHF and Chameleon LF tools. Hardware validation pending.\n"
                "Homepage: https://github.com/Hamspiced/Quadband_Card_Studio\n")
@@ -151,7 +160,7 @@ def package(build, output, zig_root=None):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build-dir", type=Path, default=ROOT / ".build/cardputerzero-arm64")
-    parser.add_argument("--output", type=Path, default=ROOT / "dist/quadband-cardputerzero_0.3.0_arm64.deb")
+    parser.add_argument("--output", type=Path, default=ROOT / "dist/quadband-cardputerzero_0.4.0_arm64.deb")
     parser.add_argument("--zig-root", type=Path, required=True)
     args = parser.parse_args()
     package(args.build_dir, args.output, args.zig_root)

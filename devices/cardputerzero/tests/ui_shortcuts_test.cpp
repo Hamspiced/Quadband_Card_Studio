@@ -105,6 +105,36 @@ struct Fixture {
         assert(lv_group_get_focused(group)==target);
     }
 };
+void zero_arrow_label_navigation() {
+    Fixture f;
+    auto* first=button(lv_screen_active(),"[1] hf / nfc");
+    auto* second=button(lv_screen_active(),"[2] uhf");
+    assert(first && second);
+    auto* group=static_cast<lv_group_t*>(lv_obj_get_group(first));
+    assert(group && lv_group_get_focused(group)==first);
+    f.key('x');assert(lv_group_get_focused(group)==second);
+    f.key('f');assert(lv_group_get_focused(group)==first);
+    f.key('c');assert(lv_group_get_focused(group)==second);
+    f.key('z');assert(lv_group_get_focused(group)==first);
+    f.tap(Key::Down);assert(lv_group_get_focused(group)==second);
+    f.tap(Key::Up);assert(lv_group_get_focused(group)==first);
+    assert(f.calls.empty() && f.detections==0 && f.stops==0 && f.quits==0);
+    f.key('s');
+    auto* connections=button(lv_screen_active(),"connections");
+    group=static_cast<lv_group_t*>(lv_obj_get_group(connections));
+    assert(group);
+    f.focus(connections);
+    f.key('x');assert(lv_group_get_focused(group)!=connections);
+    f.key('f');assert(lv_group_get_focused(group)==connections);
+    assert(f.calls.empty() && f.detections==0);
+    f.key('1');const auto before=f.calls.size();
+    f.key('c');
+    assert(caption(lv_screen_active()).find("HF RAM copy")!=std::string::npos);
+    assert(f.calls.size()==before);
+    f.key('m');f.key('n');f.key('f');
+    assert(caption(lv_screen_active()).find("NDEF fields")!=std::string::npos);
+    assert(f.calls.size()==before);
+}
 void missing_readers_and_long_results() {
     Fixture f;f.state.simulated=false;f.state.connected=false;f.publish();
     f.key('1');f.key('2');f.key('3');assert(f.calls.empty());
@@ -188,6 +218,8 @@ void review_gate() {
     const auto before=f.calls.size();
     for(char c:std::string("123rw"))f.key(c);
     assert(f.calls.size()==before);
+    f.key('c');assert(lv_group_get_focused(group)==confirm && f.calls.size()==before);
+    f.key('z');assert(lv_group_get_focused(group)==cancel && f.calls.size()==before);
     f.focus(confirm);f.press(Key::Enter,0,true);f.press(Key::Enter);assert(f.calls.size()==before);
     f.release(Key::Enter);f.tap(Key::Enter);
     assert(f.calls.size()==before+1 && f.calls.back().command==Command::Confirm && f.calls.back().review_token==100);
@@ -204,7 +236,7 @@ int main() {
     lv_display_set_color_format(display,LV_COLOR_FORMAT_RGB565);
     lv_display_set_buffers(display,buffer.data(),nullptr,sizeof(buffer),LV_DISPLAY_RENDER_MODE_PARTIAL);
     lv_display_set_flush_cb(display,flush);
-    direct_workflows();editor_and_busy_isolation();missing_readers_and_long_results();manual_recovery_after_discovery();review_gate();
+    zero_arrow_label_navigation();direct_workflows();editor_and_busy_isolation();missing_readers_and_long_results();manual_recovery_after_discovery();review_gate();
     lv_display_delete(display);lv_deinit();
     std::puts("Independent acceptance: direct reader+R workflows, visible primary/review actions, same-reader result retention, editor/busy isolation and held/repeat/token write gates passed.");
 }

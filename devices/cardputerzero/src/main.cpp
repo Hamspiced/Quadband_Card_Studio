@@ -3,6 +3,7 @@
 #include "runtime.hpp"
 #include "ui.hpp"
 #include "platform/discovery.hpp"
+#include "platform/bluetooth.hpp"
 #include <chrono>
 #include <csignal>
 #include <cstdio>
@@ -20,7 +21,7 @@ uint32_t ticks() {
 }
 int main(int argc, char** argv) {
     using namespace qb::zero;
-    bool simulated = false, device = false, headless = false, autodetect = true, detect_only = false;
+    bool simulated = false, device = false, headless = false, autodetect = true, detect_only = false, ble_check = false;
     unsigned seconds = 0;
     std::string framebuffer = "/dev/fb0", keyboard, screenshot;
     ReaderConfig config;
@@ -35,6 +36,7 @@ int main(int argc, char** argv) {
             else if (argument == "--device") device = true;
             else if (argument == "--no-autodetect") autodetect = false;
             else if (argument == "--detect-only") detect_only = true;
+            else if (argument == "--bluetooth-check") ble_check = true;
             else if (argument == "--headless") headless = true;
             else if (argument == "--seconds") {
                 const auto text = value();
@@ -46,20 +48,29 @@ int main(int argc, char** argv) {
             else if (argument == "--screenshot") screenshot = value();
             else if (argument == "--hf-i2c") config.hf_i2c = value();
             else if (argument == "--uhf-serial") config.uhf_serial = value();
-            else if (argument == "--ultra-serial") config.ultra_serial = value();
+            else if (argument == "--ultra-serial") { config.ultra_serial = value(); config.ultra_autodetected = false; }
             else if (argument == "--grove-i2c-confirmed") config.grove_i2c_confirmed = true;
             else if (argument == "--help") {
-                std::puts("Quadband CardputerZero 0.3.0\n"
+                std::puts("Quadband CardputerZero 0.4.0\n"
                     "  --simulate [--headless] [--seconds N] [--screenshot image.ppm]\n"
                     "  --device [--framebuffer PATH] [--keyboard PATH]\n"
                     "  Optional endpoints: --hf-i2c PATH --grove-i2c-confirmed\n"
                     "                      --uhf-serial PATH --ultra-serial PATH\n"
                     "Device launch identifies known modules without scanning cards.\n"
                     "  --no-autodetect disables startup detection; --detect-only prints metadata without opening the screen.\n"
-                    "Arrow/Fn keys or Tab select; Enter activates; Esc backs/cancels.\n"
+                    "  --bluetooth-check checks Python dependencies only (no adapter scan or pairing).\n"
+                    "Fn+F/X/Z/C or Tab select; bare arrow letters navigate when no shown shortcut uses them.\n"
+                    "Enter activates; Esc backs/cancels.\n"
                     "Ctrl+C stops a reader operation; Ctrl+Q exits.");
                 return 0;
             } else throw std::runtime_error("Unknown option: " + argument);
+        }
+        if (ble_check) {
+            platform::BleSession session;
+            std::string detail;
+            auto result = session.preflight(detail);
+            std::puts(detail.c_str());
+            return result == qb::OK ? 0 : 1;
         }
         if (simulated == device || (headless && !simulated))
             throw std::runtime_error("Select exactly one of --simulate or --device; headless mode is simulation-only.");
@@ -75,8 +86,8 @@ int main(int argc, char** argv) {
                 if (interrupted) runtime.stop();
             const auto result = runtime.snapshot();
             if (result.pending) { runtime.stop(); throw std::runtime_error("Discovery deadline exceeded."); }
-            const char* names[]{"UHF","RFID2","CC1101","Cap NFC"};
-            for (unsigned n = 0; n < 4; ++n) {
+            const char* names[]{"UHF","RFID2","CC1101","Cap NFC","Chameleon Ultra"};
+            for (unsigned n = 0; n < result.discovery.devices.size(); ++n) {
                 const auto& item = result.discovery.devices[n];
                 std::printf("%s: %s | %s | %s | %s\n",names[n],platform::detection_name(item.state),
                             item.endpoint.c_str(),item.identity.c_str(),item.detail.c_str());
@@ -97,6 +108,9 @@ int main(int argc, char** argv) {
             callbacks.stop = [&] { runtime.stop(); };
             callbacks.quit = [&] { runtime.stop(); quit = true; };
             callbacks.detect = [&](const ReaderConfig& endpoints) { return runtime.detect(endpoints); };
+            callbacks.bluetooth_scan = [&] { return runtime.scan_bluetooth(); };
+            callbacks.bluetooth_pin = [&](const std::string& pin) { return runtime.bluetooth_pin(pin); };
+            callbacks.disconnect = [&] { return runtime.disconnect(); };
             ApplicationUi ui(lv_screen_active(), std::move(callbacks));
             if (simulated) {
                 runtime.connect(config);

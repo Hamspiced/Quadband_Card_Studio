@@ -1,6 +1,6 @@
 import asyncio
 import pytest
-from quadband import pcsc, transports, hf
+from quadband import pcsc, transports, hf, bluetooth
 from quadband.common import NoCard
 
 
@@ -91,13 +91,13 @@ async def test_ble_chameleon_pairs_then_protected_read_then_notifications(monkey
     import bleak
     calls = []
     class Characteristic:
-        properties = ['read', 'write']
+        properties = ['read', 'write', 'notify']
     class Services:
         def get_characteristic(self, _):
             return Characteristic()
     class Client:
-        def __init__(self, device, **kwargs):
-            calls.append(('construct', kwargs['pair']))
+        def __init__(self, device, *, pair=False, **kwargs):
+            calls.append(('construct', pair))
             self.is_connected = False
             self.services = Services()
         async def connect(self):
@@ -115,7 +115,7 @@ async def test_ble_chameleon_pairs_then_protected_read_then_notifications(monkey
             self.is_connected = False
             calls.append('disconnect')
     monkeypatch.setattr(bleak, 'BleakClient', Client)
-    monkeypatch.setattr(transports.sys, 'platform', 'win32')
+    monkeypatch.setattr(bluetooth.sys, 'platform', 'win32')
     channel = await transports.BLEChannel.connect(object(), True)
     assert calls[:4] == [('construct', True), 'connect', 'protected-read', 'subscribe']
     assert await channel.receive() == b'reply'
@@ -136,7 +136,7 @@ async def test_ble_connection_failure_closes_client(monkeypatch):
             self.is_connected = False
             calls.append('closed')
     monkeypatch.setattr(bleak, 'BleakClient', Client)
-    with pytest.raises(RuntimeError, match='Pairing'):
+    with pytest.raises(Exception, match='pairing'):
         await transports.BLEChannel.connect(object(), True)
     assert calls == ['closed']
 

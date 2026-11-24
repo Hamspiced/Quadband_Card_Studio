@@ -7,4 +7,4 @@ set(EXTRA_COMPONENT_DIRS
     ".build/deps/M5Unit-RFID"
     ".build/deps/esp-usb/host/class/cdc/usb_host_cdc_acm")
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(quadband_cores3 VERSION 0.4.0)
+project(quadband_cores3 VERSION 0.5.0)

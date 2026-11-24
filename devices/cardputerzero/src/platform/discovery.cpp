@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <thread>
@@ -23,6 +24,7 @@ Bytes identity_request(Peripheral device, unsigned step) {
     if (device == Peripheral::Rfid && !step) return {0x37};
     if (device == Peripheral::Cc1101 && step < 2) return {uint8_t(0xf0 + step),0};
     if (device == Peripheral::CapNfc && !step) return {0x7f,0};
+    if (device == Peripheral::Ultra && step < 2) return ultra_frame(step ? 1033 : 1000);
     return {};
 }
 const char* detection_name(Detection state) {
@@ -35,6 +37,7 @@ const char* detection_name(Detection state) {
     case Detection::Blocked: return "Power/routing needed";
     case Detection::Cancelled: return "Cancelled";
     case Detection::Manual: return "Manual endpoint";
+    case Detection::Ambiguous: return "Choose endpoint";
     default: return "Not checked";
     }
 }
@@ -73,6 +76,9 @@ bool decode(Peripheral device, const Bytes& data, std::string& identity) {
         ((data[0] & 0xf8) == 0x28 || (data[0] & 0xf8) == 0x30)) {
         identity = std::string((data[0] & 0xf8) == 0x30 ? "ST25R3916B " : "ST25R3916 ") +
             hex(data[0]) + " (tools not implemented)"; return true;
+    }
+    if (device == Peripheral::Ultra && data.size() == 3 && data[0] == 2 && data[2] == 0) {
+        identity = "Chameleon Ultra 2." + std::to_string(data[1]) + " (USB)"; return true;
     }
     return false;
 }
@@ -127,6 +133,10 @@ bool spi_node(const char* path, uint8_t index) {
 }
 class LinuxProbe final : public DiscoveryProbe {
 public:
+    std::vector<std::string> ultra_endpoints(const std::function<bool()>& stop,
+                                            DiscoveryClock::time_point deadline) override {
+        return ultra_usb_endpoints("/sys/class/tty","/dev",stop,deadline);
+    }
     DiscoveryEnvironment environment() override {
         DiscoveryEnvironment env;
         const auto model = read_text("/proc/device-tree/model");
@@ -141,10 +151,15 @@ public:
         const auto i2c = pins("2-3");
         env.i2c = i2c.find("GPIO2 = SDA1") != std::string::npos && i2c.find("GPIO3 = SCL1") != std::string::npos;
         const auto cap = pins("26");
-        env.cap_power = on("/sys/class/leds/ext_5v_out/brightness") &&
-            cap.find("| hi") != std::string::npos;
-        env.spi_routes = spi_node("/sys/bus/spi/devices/spi0.1/of_node/reg",1) &&
-            spi_node("/sys/bus/spi/devices/spi0.2/of_node/reg",2);
+        const auto supply = read_text("/sys/class/leds/ext_5v_out/brightness");
+        env.cap_power = !supply.empty() && supply[0] != '0' && cap.find("| hi") != std::string::npos;
+        if (supply.empty()) env.cap_power_detail = "Cannot read HAT 5V status; no power or pin changes made.";
+        else if (supply[0] == '0') env.cap_power_detail = "HAT 5V is OFF. Enable HAT/EXT 5V in OS ExtPort settings, then rescan.";
+        else if (cap.empty()) env.cap_power_detail = "Cannot verify Cap POWER_EN on GPIO26; no pin changes made.";
+        else if (cap.find("| hi") == std::string::npos)
+            env.cap_power_detail = "Cap POWER_EN (GPIO26) is not HIGH; no automatic GPIO changes made.";
+        env.cc1101_spi = spi_node("/sys/bus/spi/devices/spi0.1/of_node/reg",1);
+        env.cap_nfc_spi = spi_node("/sys/bus/spi/devices/spi0.2/of_node/reg",2);
         return env;
     }
     Status grove_power() override {
@@ -159,6 +174,12 @@ public:
                     DiscoveryClock::time_point deadline) override {
         data.clear();
         if (stop()) return CANCELLED;
+        if (device == Peripheral::Ultra) {
+            ReaderConfig config; config.ultra_serial = overrides.ultra_serial;
+            auto wire = make_posix_wire();
+            const auto result = wire->open(config);
+            return result == OK ? identify_ultra(*wire,data,stop,deadline) : result;
+        }
         if (device == Peripheral::Uhf || device == Peripheral::Rfid) {
             ReaderConfig config;
             if (device == Peripheral::Uhf) { config.uhf_serial = "/dev/serial0"; config.uhf_baud = overrides.uhf_baud; }
@@ -204,6 +225,78 @@ public:
 };
 #endif
 }
+std::vector<std::string> ultra_usb_endpoints(const std::string& tty_root, const std::string& device_root,
+                                           const std::function<bool()>& stop, DiscoveryClock::time_point deadline) {
+    namespace fs = std::filesystem;
+    std::vector<std::string> candidates;
+    std::error_code error;
+    fs::directory_iterator current(tty_root,error), end;
+    for (; !error && current != end; current.increment(error)) {
+        if ((stop && stop()) || DiscoveryClock::now() >= deadline) return {};
+        const auto name = current->path().filename().string();
+        if (name.size() <= 6 || name.size() > 16 || name.compare(0,6,"ttyACM") ||
+            name.find_first_not_of("0123456789",6) != std::string::npos) continue;
+        std::ifstream file(current->path() / "device/uevent",std::ios::binary);
+        std::string metadata(2048,'\0');
+        file.read(metadata.data(),std::streamsize(metadata.size()));
+        const auto size = size_t(file.gcount());
+        if (!size || size == metadata.size()) continue;
+        metadata.resize(size);
+        std::istringstream lines(metadata);
+        std::string line, product;
+        bool cdc = false, duplicate = false, seen_product = false;
+        while (std::getline(lines,line)) {
+            if (line == "DRIVER=cdc_acm") cdc = true;
+            if (line.compare(0,8,"PRODUCT=") == 0) {
+                if (seen_product) duplicate = true;
+                seen_product = true;
+                product = line.substr(8);
+            }
+        }
+        unsigned fields[3]{};
+        size_t begin = 0;
+        bool valid = cdc && !duplicate;
+        for (unsigned i = 0; i < 3 && valid; ++i) {
+            const auto finish = product.find('/',begin);
+            const auto part = product.substr(begin,finish == std::string::npos ? finish : finish-begin);
+            valid = !part.empty() && part.size() <= 4 &&
+                part.find_first_not_of("0123456789abcdefABCDEF") == std::string::npos &&
+                ((i == 2) == (finish == std::string::npos));
+            if (valid) {
+                fields[i] = unsigned(std::stoul(part,nullptr,16));
+                if (i < 2) begin = finish+1;
+            }
+        }
+        if (valid && fields[0] == 0x6868 && fields[1] == 0x8686) {
+            candidates.push_back((fs::path(device_root) / name).string());
+            if (candidates.size() == 2) break;
+        }
+    }
+    if (error) return {};
+    std::sort(candidates.begin(),candidates.end());
+    return candidates;
+}
+Status identify_ultra(Wire& wire, Bytes& data, const std::function<bool()>& stop,
+                      DiscoveryClock::time_point deadline) {
+    data.clear();
+    for (unsigned step = 0; step < 2; ++step) {
+        if (stop()) { data.clear(); return CANCELLED; }
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+            deadline-DiscoveryClock::now()).count();
+        if (remaining <= 0) { data.clear(); return TIMEOUT; }
+        Bytes response;
+        const auto status = wire.exchange(3,identity_request(Peripheral::Ultra,step),response,
+            unsigned(std::min<int64_t>(500,remaining)),stop);
+        if (status != OK || stop()) { data.clear(); return stop() ? CANCELLED : status; }
+        if (!ultra_success(response) || response.size() != (step ? 11U : 12U) ||
+            response[9] != (step ? 0 : 2)) {
+            data.clear(); return UNSUPPORTED;
+        }
+        data.insert(data.end(),response.begin()+9,response.end()-1);
+    }
+    if (DiscoveryClock::now() >= deadline) { data.clear(); return TIMEOUT; }
+    return OK;
+}
 DiscoveryReport discover(const ReaderConfig& overrides, DiscoveryProbe& probe, const std::function<bool()>& cancelled,
                          DiscoveryClock::time_point deadline) {
     DiscoveryReport report; report.config = overrides; report.attempted = true;
@@ -212,9 +305,44 @@ DiscoveryReport discover(const ReaderConfig& overrides, DiscoveryProbe& probe, c
     if (stop()) return report;
     const auto environment = probe.environment();
     for (unsigned i = 0; i < report.devices.size(); ++i) {
-        auto& item = report.devices[i]; item.endpoint = endpoints[i];
+        auto& item = report.devices[i];
+        if (i < 4) item.endpoint = endpoints[i];
         if (stop()) { item.state = Detection::Cancelled; continue; }
         const auto device = Peripheral(i);
+        if (device == Peripheral::Ultra) {
+            if (!overrides.ultra_serial.empty() && !overrides.ultra_autodetected) {
+                item.state = Detection::Manual; item.endpoint = overrides.ultra_serial;
+                item.detail = "Explicit USB endpoint retained; connection verifies firmware/model/capabilities.";
+                continue;
+            }
+            report.config.ultra_serial.clear(); report.config.ultra_autodetected = false;
+            const auto candidates = probe.ultra_endpoints(stop,deadline);
+            if (stop()) { item.state = Detection::Cancelled; continue; }
+            if (candidates.size() != 1) {
+                item.state = candidates.empty() ? Detection::Missing : Detection::Ambiguous;
+                item.detail = candidates.empty() ?
+                    "No Chameleon USB CDC device. Set USB Switch to Host; use USB-A/USB-C1 and a data cable." :
+                    "Multiple Chameleon USB devices; choose an explicit Ultra USB serial endpoint.";
+                continue;
+            }
+            item.endpoint = candidates[0];
+            ReaderConfig config; config.ultra_serial = item.endpoint;
+            Bytes bytes;
+            const auto result = probe.identify(device,config,bytes,stop,deadline);
+            if (stop()) { item.state = Detection::Cancelled; continue; }
+            if (result == OK && decode(device,bytes,item.identity)) {
+                item.state = Detection::Detected; report.config.ultra_serial = item.endpoint;
+                report.config.ultra_autodetected = true;
+            } else {
+                item.state = result == OK ? Detection::Unsupported : failure(result);
+                item.detail = item.state == Detection::Permission ?
+                    "USB serial permission needed; check dialout group access. No card scan sent." :
+                    item.state == Detection::Busy ? "USB serial endpoint is in use; close other USB clients. No card scan sent." :
+                    item.state == Detection::Unsupported ? "Requires supported Chameleon Ultra 2.x firmware/model. No card scan sent." :
+                    "USB identity did not respond; check cable/device and other USB clients. No card scan sent.";
+            }
+            continue;
+        }
         const auto manual = i == 0 ? overrides.uhf_serial : i == 1 ? overrides.hf_i2c : std::string();
         if (!manual.empty() && manual != endpoints[i] && !(i == 0 && manual == "/dev/ttyS0")) {
             item.state = Detection::Manual; item.endpoint = manual; item.detail = "Explicit endpoint retained."; continue;
@@ -225,11 +353,16 @@ DiscoveryReport discover(const ReaderConfig& overrides, DiscoveryProbe& probe, c
             item.state = Detection::Unsupported; item.detail = "RFID/RFID2 discovery only uses address 0x28."; continue;
         }
         if (!environment.zero || (i == 0 && !environment.uart) || (i == 1 && !environment.i2c) ||
-            (i >= 2 && (!environment.cap_power || !environment.spi_routes))) {
+            (i >= 2 && (!environment.cap_power ||
+                (i == 2 ? !environment.cc1101_spi : !environment.cap_nfc_spi)))) {
             item.state = Detection::Blocked;
             item.detail = !environment.zero ? "Unknown board: no automatic probes." :
                 i == 0 ? "Keep right Grove in UART mode; exit apps using GPIO14/15." :
-                i == 1 ? "HF connector requires I2C1 on GPIO2/3." : "Enable Cap power/OS SPI overlay; no pinmux changes made.";
+                i == 1 ? "HF connector requires I2C1 on GPIO2/3." :
+                !environment.cap_power ? (environment.cap_power_detail.empty() ?
+                    "Cap power is not verified; check HAT 5V and POWER_EN (GPIO26)." : environment.cap_power_detail) :
+                i == 2 ? "CC1101 SPI0.1 route is missing. Check the OS SPI overlay; no pinmux changes made." :
+                    "Cap NFC SPI0.2 route is missing. Check the OS GPIO22 CS2 overlay; no pinmux changes made.";
             continue;
         }
         if (i == 0) {
@@ -249,7 +382,9 @@ DiscoveryReport discover(const ReaderConfig& overrides, DiscoveryProbe& probe, c
             if (i == 1) { report.config.hf_i2c = endpoints[i]; report.config.grove_i2c_confirmed = true; }
         } else {
             item.state = result == OK ? Detection::Unsupported : failure(result);
-            item.identity.clear(); item.detail = "No recognized module identity; no RF/card command was sent.";
+            item.identity.clear(); item.detail = i == 1 ?
+                "RFID/RFID2 did not identify at I2C 0x28. For Cap Grove wiring, check HAT 5V/power. No card scan sent." :
+                "No recognized module identity; no RF/card command was sent.";
         }
     }
     report.completed = !stop();

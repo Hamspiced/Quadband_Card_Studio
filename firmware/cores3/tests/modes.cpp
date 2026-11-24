@@ -88,6 +88,14 @@ int main() {
     assert(!touches.permit(screen, true, true));
     assert(!touches.permit(screen, false, false));
     assert(touches.permit(screen, true, true));
+    screen.ultra.phase = UltraPhase::Pairing; screen.ultra.challenge = 5;
+    assert(!touches.permit(screen, true, true));
+    assert(!touches.permit(screen, false, false));
+    assert(touches.permit(screen, true, true));
+    ++screen.ultra.epoch;
+    assert(!touches.permit(screen, true, true));
+    assert(!touches.permit(screen, false, false));
+    assert(touches.permit(screen, true, true));
     TouchGate reviews;
     UiSnapshot review;
     assert(!reviews.permit(review, false, false));

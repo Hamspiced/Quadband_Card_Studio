@@ -7,6 +7,44 @@ import MagStripeCore
 @testable import MagStripeStudio
 
 final class ChameleonHardwareTests: XCTestCase {
+    func testBluetoothDiscoveryExpiresAndResetRejectsPreviousSelection() {
+        var discovery = ChameleonDiscoverySnapshot()
+        let first = UUID(), second = UUID(), start = Date(timeIntervalSince1970:1_000)
+        discovery.record(first,now:start)
+        XCTAssertTrue(discovery.contains(first,now:start.addingTimeInterval(29)))
+        XCTAssertFalse(discovery.contains(first,now:start.addingTimeInterval(31)))
+        XCTAssertFalse(discovery.contains(first,now:start.addingTimeInterval(-1)))
+        discovery.reset(); discovery.record(second,now:start.addingTimeInterval(32))
+        XCTAssertFalse(discovery.contains(first,now:start.addingTimeInterval(32)))
+        XCTAssertTrue(discovery.contains(second,now:start.addingTimeInterval(32)))
+    }
+    @MainActor func testIdleDisconnectFailsClosedAndIgnoresLateNotifications() async throws {
+        let channel = FakeLFChannel()
+        let connection = ChameleonConnection(channel:channel)
+        var disconnects = 0
+        connection.onDisconnect = { _ in disconnects += 1 }
+        channel.onDisconnect?(StripeError("Reader disconnected"))
+        channel.onDisconnect?(StripeError("Late duplicate disconnect"))
+        channel.onBytes?(try ChameleonFrame(command:1000,status:0x68,data:[2,1]).encoded())
+        XCTAssertEqual(disconnects,1); XCTAssertTrue(channel.closed)
+        do { _ = try await connection.exchange(1000,data:[],timeout:1); XCTFail() } catch {}
+        XCTAssertTrue(channel.sent.isEmpty)
+    }
+    @MainActor func testCancelledModelClearsSharedHFReadinessWithoutBluetoothAccess() {
+        let root = AppModel(scanDevices:false), selected = "Chameleon Ultra · Bluetooth"
+        let model = root.lf
+        model.autoDiscovery = false
+        model.connected = true
+        root.nfc.readers = [selected,"Mock PCSC"]
+        root.nfc.selectedReader = selected
+        model.selectedBluetooth = UUID()
+        model.cancel()
+        XCTAssertFalse(model.connected); XCTAssertNil(model.info)
+        XCTAssertNil(model.hfReaderName); XCTAssertFalse(model.canOperate)
+        XCTAssertFalse(model.bluetooth.scanning); XCTAssertTrue(model.bluetooth.devices.isEmpty)
+        XCTAssertEqual(root.nfc.readers,["Mock PCSC"]); XCTAssertEqual(root.nfc.selectedReader,"")
+        XCTAssertTrue(root.nfc.requiresExplicitReaderSelection)
+    }
     func testBluetoothSecurityReadPrecedesUARTSubscription() {
         var setup = ChameleonBLESetup()
         XCTAssertEqual(setup.uartDiscovered(hasBatteryService:true),.discoverBattery)

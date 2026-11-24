@@ -1,4 +1,5 @@
 #include "wire.hpp"
+#include "bluetooth.hpp"
 #include <algorithm>
 #include <chrono>
 #include <set>
@@ -42,6 +43,7 @@ bool ultra_success(const Bytes& response, unsigned status) {
 }
 namespace {
 class PosixWire final : public Wire {
+    std::shared_ptr<BleSession> ble_;
     [[maybe_unused]] int fds_[3]{-1, -1, -1};
     [[maybe_unused]] unsigned address_ = 0;
 #if defined(__linux__) || defined(QB_ZERO_PTY_TEST)
@@ -93,6 +95,12 @@ public:
     ~PosixWire() override { close(); }
     Status open(const ReaderConfig& config) override {
         close();
+        if (!config.ultra_ble_token.empty()) {
+            if (!config.ultra_serial.empty() || !config.ble_session) return INVALID_ARGUMENT;
+            ble_ = config.ble_session;
+            auto status = ble_->connect(config.ultra_ble_token);
+            if (status != OK) { close(); return status; }
+        }
 #if defined(__linux__) || defined(QB_ZERO_PTY_TEST)
         const std::string paths[]{config.hf_i2c, config.uhf_serial, config.ultra_serial};
         std::set<std::string> unique;
@@ -123,6 +131,10 @@ public:
 #endif
     }
     void close() noexcept override {
+        if (ble_) {
+            try { ble_->disconnect(); } catch (...) { ble_->shutdown(); }
+            ble_.reset();
+        }
 #if defined(__linux__) || defined(QB_ZERO_PTY_TEST)
         for (unsigned i = 0; i < 3; ++i) if (fds_[i] >= 0) {
             if (i && saved_valid_[i]) {
@@ -158,6 +170,7 @@ public:
     Status exchange(uint8_t channel, const Bytes& request, Bytes& response,
                     unsigned timeout_ms, const Stop& stop) override {
         response.clear();
+        if (channel == 3 && ble_) return ble_->exchange(request, response, timeout_ms, stop);
 #if defined(__linux__) || defined(QB_ZERO_PTY_TEST)
         if ((channel != 2 && channel != 3) || request.size() < 7 || request.size() > max_payload ||
             !timeout_ms || timeout_ms > 20000) return INVALID_ARGUMENT;

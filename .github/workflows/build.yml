@@ -41,6 +41,7 @@ jobs:
       - run: python -m unittest discover -s tests_release -p 'test_*.py' -v
       - run: python -m unittest discover -s protocol -p 'test_*.py' -v
       - run: python firmware/cores3/tests/run.py
+      - run: python firmware/cores3/tests/ble_run.py
       - run: python firmware/cores3/tests/ui_run.py
       - run: python firmware/cores3/tests/standalone_run.py
       - run: python -m unittest discover -s firmware/cores3/tests -p 'test_web_export.py' -v

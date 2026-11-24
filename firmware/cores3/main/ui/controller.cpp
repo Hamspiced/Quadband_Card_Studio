@@ -93,6 +93,9 @@ void Controller::update(const UiSnapshot& snapshot) {
         for (size_t n = 0; n < target.capability_count; ++n)
             bounded_copy(target.capabilities[n], source.capabilities[n]);
     }
+    if (ultra_.epoch != snapshot.ultra.epoch || ultra_.challenge != snapshot.ultra.challenge ||
+        snapshot.ultra.phase != UltraPhase::Pairing) { std::memset(pin_, 0, sizeof(pin_)); pin_size_ = 0; }
+    ultra_ = snapshot.ultra; transport_ = snapshot.ultra_transport;
     local_ = snapshot.local;
     local_.light_theme = snapshot.light_theme; local_.battery = snapshot.battery_percent;
     if (changed_mode) { tools_.close(); tools_obscured_ = true; page_ = Page::Dashboard; settings_page_ = 0; }
@@ -102,6 +105,7 @@ void Controller::update(const UiSnapshot& snapshot) {
 
 Modal Controller::modal() const {
     if (state_.pairing_pending) return Modal::Pairing;
+    if (ultra_.phase == UltraPhase::Pairing) return Modal::UltraPin;
     if (state_.release_unverified) return Modal::None;
     // Once a handoff is running no stale confirmation can authorize another action.
     if (state_.transition_pending) return Modal::None;
@@ -280,7 +284,7 @@ void Controller::settings() {
     if (!settings_page_) {
         button({8, 44, 304, 40}, state_.light_theme ? "Theme: Light" : "Theme: Dark", UiAction::ToggleTheme, safe);
         button({8, 91, 304, 40}, state_.pairing_open ? "Pairing window open" : "Open pairing window", UiAction::OpenPairing, safe);
-        navigation({8, 138, 304, 40}, "Diagnostics", Page::Diagnostics);
+        navigation({8, 138, 304, 40}, "Ultra USB / Bluetooth", Page::Ultra);
         label(8, 187, 304, "Preferences are applied by the runtime.", 1, true);
     } else {
         char usb[53]; std::snprintf(usb, sizeof(usb), "USB: %s", usb_title(state_.usb_host));
@@ -290,7 +294,7 @@ void Controller::settings() {
         button({8, 61, 304, 40}, state_.usb_host == UsbHostState::Enabled ? "USB host enabled" :
             state_.usb_host == UsbHostState::Requested ? "USB host requested" : "Enable USB host...", UiAction::RequestUsbHost, can_enable);
         label(8, 108, 304, "Disconnect PC / external VBUS first.", 1, true);
-        button({8, 130, 304, 40}, "Reset BLE bonds...", UiAction::RequestClearBonds, safe);
+        button({8, 130, 304, 40}, "Forget desktop bond...", UiAction::RequestClearBonds, safe);
         label(8, 179, 304, "Reset requires physical confirmation.", 1, true);
     }
     navigation({8, 207, 148, 33}, "Back", Page::Dashboard);
@@ -315,15 +319,52 @@ void Controller::diagnostics() {
     navigation({8, 207, 148, 33}, "Back", Page::Dashboard);
     button({164, 207, 148, 33}, "Refresh", UiAction::Refresh, !state_.transition_pending);
 }
+void Controller::ultra() {
+    header("Ultra USB / Bluetooth");
+    const bool safe = !state_.busy && !state_.transition_pending && !state_.release_unverified;
+    label(8, 42, 304, transport_ == UltraTransport::Usb ? "Selected transport: USB" : "Selected transport: Bluetooth");
+    label(8, 60, 304, ultra_.message, 1, true);
+    if (ultra_.phase == UltraPhase::Selecting) {
+        if (!ultra_.count) label(8, 84, 304, "No NUS peers. Scan again explicitly.");
+        for (size_t i = 0; i < ultra_.count; ++i)
+            button({8, 80 + int(i) * 20, 304, 20}, ultra_.peers[i].label,
+                UiAction(unsigned(UiAction::UltraPeer0) + i), safe);
+        navigation({8, 207, 96, 33}, "Back", Page::Settings);
+        button({112, 207, 96, 33}, "Scan", UiAction::UltraScan, safe);
+        button({216, 207, 96, 33}, "Cancel", UiAction::UltraDisconnect, safe);
+    } else {
+        label(8, 86, 304, ultra_.selected.label);
+        label(8, 106, 304, "Only validated Ultra peers become ready.", 1, true);
+        button({8, 126, 148, 34}, "Scan BLE", UiAction::UltraScan, safe && ultra_.phase != UltraPhase::Scanning);
+        button({164, 126, 148, 34}, "Use USB", UiAction::UltraUsb, safe);
+        button({8, 166, 304, 34}, "Disconnect / cancel BLE", UiAction::UltraDisconnect, safe);
+        navigation({8, 207, 304, 33}, "Back", Page::Settings);
+    }
+}
 void Controller::overlay() {
     const auto current = modal();
     if (current == Modal::None) return;
-    // Modal composition discards every underlying hit region.
-    hit_count_ = 0;
+    // Full-screen modal composition discards underlying commands and hit regions.
+    hit_count_ = 0; count_ = 0;
     fill(screen, canvas_);
     panel({8, 8, 304, 224}, border_, canvas_, 12);
     panel({9, 9, 302, 222}, surface_color_, border_, 11);
     label_background_ = surface_color_;
+    if (current == Modal::UltraPin) {
+        label(16, 16, 288, "Reader passkey input", 2);
+        label(16, 44, 288, ultra_.selected.label);
+        char masked[24]; std::snprintf(masked, sizeof(masked), "%u / 6 digits entered", unsigned(pin_size_));
+        label(16, 65, 288, masked);
+        for (unsigned i = 0; i < 10; ++i) {
+            char digit[]{char('0' + i), 0};
+            button({12 + int(i % 5) * 60, 88 + int(i / 5) * 40, 56, 36}, digit, UiAction::None);
+            --hit_count_; // Keypad input is handled locally before action dispatch.
+        }
+        button({12, 170, 92, 28}, "Erase", UiAction::None); --hit_count_;
+        button({112, 170, 196, 28}, "Cancel", UiAction::UltraDisconnect);
+        button({12, 204, 296, 28}, "Confirm selected reader", UiAction::UltraPin, pin_size_ == 6);
+        return;
+    }
     UiAction approve = UiAction::None, cancel = UiAction::None;
     if (current == Modal::Pairing) {
         label(20, 26, 280, "Approve pairing?", 2);
@@ -346,9 +387,9 @@ void Controller::overlay() {
         label(20, 135, 280, "External VBUS interlock enforced.", 1, true);
         approve = UiAction::ConfirmUsbHost; cancel = UiAction::CancelUsbHost;
     } else {
-        label(20, 26, 280, "Reset BLE bonds?", 2);
-        label(20, 69, 280, "Forget previously paired computers.");
-        label(20, 95, 280, "Pair again after reset.", 1, true);
+        label(20, 26, 280, "Forget desktop bond?", 2);
+        label(20, 69, 280, "Forget only the desktop peer.");
+        label(20, 95, 280, "Selected Ultra bond is preserved.", 1, true);
         approve = UiAction::ConfirmClearBonds; cancel = UiAction::CancelClearBonds;
     }
     button({20, 178, 132, 42}, current == Modal::Pairing ? "Reject" : "Cancel", cancel);
@@ -378,6 +419,7 @@ void Controller::render() {
     case Page::Dashboard: dashboard(); break;
     case Page::Settings: settings(); break;
     case Page::Diagnostics: diagnostics(); break;
+    case Page::Ultra: ultra(); break;
     default: detail(); break;
     }
     if (state_.transition_pending && modal() == Modal::None) {
@@ -448,6 +490,16 @@ void Controller::present() {
 }
 UiAction Controller::touch(int x, int y) {
     if (!initialized_ || !screen.contains(x, y)) return UiAction::None;
+    if (modal() == Modal::UltraPin) {
+        for (unsigned i = 0; i < 10; ++i) {
+            const Rect key{12 + int(i % 5) * 60, 88 + int(i / 5) * 40, 56, 36};
+            if (key.contains(x, y)) { if (pin_size_ < 6) pin_[pin_size_++] = char('0' + i); render(); return UiAction::None; }
+        }
+        if (Rect{12, 170, 92, 28}.contains(x, y)) {
+            if (pin_size_) pin_[--pin_size_] = 0;
+            render(); return UiAction::None;
+        }
+    }
     const bool reader_page = page_ == Page::Hf || page_ == Page::Uhf || page_ == Page::Lf;
     if (reader_page && tools_.active() && modal() == Modal::None && !state_.transition_pending &&
         state_.mode == WorkMode::Standalone && !state_.release_unverified) {
@@ -479,6 +531,11 @@ UiAction Controller::touch(int x, int y) {
         return hit.action;
     }
     return UiAction::None;
+}
+void Controller::take_ultra_pin(char (&digits)[7]) {
+    std::memcpy(digits, pin_, sizeof(pin_));
+    volatile char* p = pin_; for (unsigned i = 0; i < 7; ++i) p[i] = 0;
+    pin_size_ = 0;
 }
 local::Intent Controller::take_local_intent() {
     local::Intent intent = pending_intent_;

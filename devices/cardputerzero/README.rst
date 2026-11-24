@@ -1,7 +1,7 @@
 Quadband Card Studio for CardputerZero
 ====================================
 
-Development application 0.3.0 for the Raspberry Pi CM0/aarch64 Linux
+Development application 0.4.0 for the Raspberry Pi CM0/aarch64 Linux
 CardputerZero and Zero-Lite. This is a separate keyboard-first application,
 not ESP32 firmware, an OS image, or a CoreS3 webflasher payload. Existing
 CoreS3 and desktop targets share the corresponding guarded NDEF policy.
@@ -24,10 +24,55 @@ evidence.
 Connections
 -----------
 
+Chameleon Bluetooth is an explicit alternative to USB: open Settings >
+Connections > Chameleon Bluetooth. Disconnect existing readers first,
+then explicitly scan (six seconds, at most 16 results) and select one peer.
+Advertised names are not trusted identity; readiness still requires the
+same firmware/model/capability/mode validation as USB. Connection does not
+start RF. There is no automatic selection, command replay, reconnect or
+USB/Bluetooth fallback. Switching transports requires idle, verified cleanup.
+
+The native ARM64 executable remains statically linked, but Bluetooth needs
+Debian 13 system packages python3 (3.11+), bluez, python3-bleak (0.22.3 or
+newer), and python3-dbus-fast. Both Bleak 0.22.3 and 3.0.2 APIs are supported.
+These dependencies are declared in the Debian package; use the OS package
+manager separately before installation. No root pip, Qt runtime, daemon
+reconfiguration, adapter reset or privileged GUI is required. Run
+quadband-cardputerzero --bluetooth-check as the normal device user to verify
+the Python runtime without scanning, pairing or opening readers.
+
+An unprivileged Python helper communicates only over inherited private pipes;
+it has no network listener. Discovery results are opaque session tokens
+backed by actual BLEDevice objects, not shell/address strings. The C++ worker
+remains sole command owner. Requests have bounded lengths, deadlines and
+session/request correlation; helper death, overflow, stale input or canceled
+requests invalidate the link. A transaction shares one write/reply deadline.
+Transport changes require an acknowledged helper disconnect. Unverified
+BLE cleanup or active helper death quarantines all transports until restart;
+an interrupted mutation retains its existing WRITE UNVERIFIED warning.
+
+For a new bond, an ephemeral selected-peer-only BlueZ KeyboardOnly Agent1
+requests the reader's six-digit PIN locally. Pair is invoked on the same
+D-Bus connection as agent registration; the system default agent is not
+replaced. PIN input is masked, RAM-only and never sent in process arguments,
+logs or settings. Esc/Ctrl+C cancels; expired/unsolicited replies are rejected.
+Existing OS-managed bonds are retained. Security rejection is an error,
+not permission to disable pairing, clear bonds or downgrade security.
+Hardware status shows Bluetooth state; disconnects clear reader availability.
+Physical Linux pairing/security/permissions and keyboard acceptance remain
+hardware gates, not evidence implied by cross-builds or mocks.
+
+The NUS UUIDs and subscribe-before-command sequence were checked against
+GameTec-live/ChameleonUltraGUI revision
+a675dca9afcb311098c9e5e4cfc3c19415e47abb, serial_ble.dart. Its retry,
+DFU and connection-success policies were not adopted.
+
 The normal device launch checks only the known onboard endpoints: the
 right-hand Grove UART (/dev/serial0), RFID/RFID2 at I2C1 address 0x28, and
-the Cap identity registers at /dev/spidev0.1 and /dev/spidev0.2. No broad
-serial enumeration or I2C address scan is performed. Supported identified
+the Cap identity registers at /dev/spidev0.1 and /dev/spidev0.2. USB discovery
+checks CDC ACM sysfs metadata for the official Chameleon application USB ID
+6868:8686, and probes only one unambiguous matching endpoint. No unrelated
+serial port is opened and no I2C address scan is performed. Supported identified
 readers are connected automatically; one absent reader does not hide another.
 Use Detected hardware / status for per-module results and prerequisites,
 or Connections > Auto-detect / rescan known hardware to repeat the checks.
@@ -44,8 +89,17 @@ disables startup identification.
   default 115200. Only recognized M100/JRD/YRM-family module identities
   are accepted. The app does not disable the Linux serial console.
 * LF: official supported Chameleon Ultra 2.x USB CDC serial endpoint,
-  with the physical USB switch in Host mode. Real firmware/model/command
-  capabilities are checked; missing capabilities are not fabricated.
+  with the physical USB switch in Host mode, using USB-A or USB-C1 (not
+  the right USB-C2 charging/ADB port). Reopen the app or rescan after
+  attaching it. Firmware/model identity queries never start RF or change
+  reader mode; connection also verifies command capabilities. Missing,
+  busy, permission-denied and unsupported devices appear in Hardware.
+  Multiple matching USB devices require a manual Ultra USB serial path
+  in Connections; explicit overrides remain supported. Automatically
+  selected paths are rediscovered on rescan after unplug/replug.
+  Host mode disconnects USB ADB; use a network connection for simultaneous
+  debugging, or switch back to Slave mode for an ADB app installation.
+  No missing capabilities are fabricated and DFU bootloaders are not probed.
 
 The Zero itself has ONE Grove socket, switchable between I2C and UART,
 not separate CoreS3 Port A/Port C. With Cap CC1101, its additional I2C
@@ -74,10 +128,24 @@ uncooperative external process from using the same bus.
 Keyboard and safety
 -------------------
 
-Use native arrow/Fn navigation or Tab/Shift+Tab to move focus; Enter
+Use Fn+F/X/Z/C for Up/Down/Left/Right, or Tab/Shift+Tab to move focus; Enter
 activates the focused control. Text fields accept printable ASCII,
 Backspace/Delete and Home/End. Esc cancels an editor/review or returns one
 level; Esc at Home exits. Ctrl+C stops the reader job, Ctrl+Q exits.
+
+Unmodified F/X/Z/C also navigate when the current screen has no visible
+shortcut using that letter. Visible shortcuts retain priority, even when
+disabled; use Fn for unambiguous arrows on every screen. Editor fields keep
+these letters as text. When used as navigation aliases they only move
+focus; they cannot activate a control or confirm a review.
+
+Hardware status distinguishes HAT 5V, GPIO26 POWER_EN and each SPI route.
+CC1101 discovery does not require the NFC SPI0.2 route, and NFC discovery
+does not require the CC1101 SPI0.1 route. Missing one Cap SPI overlay does
+not block a responding external RFID2 on I2C1. For RFID2 on the Cap Grove,
+verify its HAT supply; the detector does not automatically change Cap
+power, GPIO/pinmux or boot overlays. Built-in Cap NFC/Sub-GHz operations
+remain separate from supported external RFID2 tools.
 
 The 0.2.0 interface opens the working screens directly, not an intermediate
 tool menu. Press 1 for HF memory, 2 for UHF inventory, or 3 for LF scan,
@@ -184,7 +252,7 @@ compiler; the helper does not install one::
     python3 devices/cardputerzero/package.py --zig-root /path/to/zig-directory
     python3 -m unittest discover -s devices/cardputerzero/tests -p 'test_*.py'
 
-The output is dist/quadband-cardputerzero_0.3.0_arm64.deb with a SHA-256
+The output is dist/quadband-cardputerzero_0.4.0_arm64.deb with a SHA-256
 sidecar. Packaging rejects a Mac/simulator/dynamic binary or changed
 source/artifact hashes. It includes source, notices and internal checksums.
 It does not install or publish anything. Its post-install script applies

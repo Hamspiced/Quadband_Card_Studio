@@ -1,4 +1,5 @@
 #include "runtime.hpp"
+#include "nus.hpp"
 #include "standalone/format.hpp"
 #include <M5Unified.h>
 #include <M5UnitUnified.h>
@@ -27,10 +28,15 @@ static uint8_t fingerprint = 0;
 static uart_port_t uart = UART_NUM_1;
 static cdc_acm_dev_hdl_t usb = nullptr;
 static bool usb_quarantined = false;
+static std::atomic<UltraTransport> selected_transport{UltraTransport::Usb};
+static bool ble_validated = false;
+static bool usb_opened_for_selection = false;
+UltraTransport ultra_transport() { return selected_transport.load(); }
 static std::atomic<bool> usb_gone{false};
 static std::mutex usb_mutex;
 static Bytes usb_rx;
 static int original_mode = -1;
+static bool ultra_mode_uncertain = false;
 static UhfGuard uhf_guard;
 struct UsbRead { bool valid = false; std::array<uint8_t, 8> credential{}; std::array<uint8_t, 16> data{}; };
 static std::array<UsbRead, 256> usb_reads;
@@ -75,6 +81,7 @@ static void usb_event(const cdc_acm_host_dev_event_data_t* event, void*) {
     if (event->type == CDC_ACM_HOST_DEVICE_DISCONNECTED || event->type == CDC_ACM_HOST_ERROR) usb_gone = true;
 }
 static Status usb_transaction(const Bytes& request, Bytes& response) {
+    if (selected_transport == UltraTransport::Bluetooth) return nus_transaction(request, response);
     if (!usb || usb_gone) return UNAVAILABLE;
     { std::lock_guard<std::mutex> guard(usb_mutex); usb_rx.clear(); }
     unsigned command = unsigned(request[2]) << 8 | request[3];
@@ -182,7 +189,7 @@ static Status usb_guarded_transaction(const Frame& f, Bytes& out) {
     unsigned cmd = unsigned(b[2]) << 8 | b[3];
     if (!usb_commands.count(cmd)) return UNSUPPORTED;
     if (cmd != 2008 && cmd != 2009) {
-        if (cmd == 1001 || cmd >= 3000) clear_usb_reads();
+        if (cmd == 1001 || cmd >= 3000) { clear_usb_reads(); ultra_mode_uncertain = true; }
         return usb_transaction(b, out);
     }
     const auto* p = b.data() + 9;
@@ -427,6 +434,24 @@ void hardware_init() {
     M5.Power.setUsbOutput(false);
     usb_host_state = UsbHostState::Off;
 }
+static bool validate_ultra() {
+    Bytes response;
+    bool ready = usb_transaction(chameleon_frame(1000), response) == OK &&
+        usb_success(response, 0x68) && response.size() == 12 && response[9] == 2;
+    ready = ready && usb_transaction(chameleon_frame(1033), response) == OK &&
+        usb_success(response, 0x68) && response.size() == 11 && response[9] == 0;
+    ready = ready && usb_transaction(chameleon_frame(1035), response) == OK &&
+        usb_success(response, 0x68) && response.size() > 10 && (response.size() - 10) % 2 == 0;
+    usb_commands.clear();
+    if (ready) for (size_t i = 9; i + 1 < response.size() - 1; i += 2)
+        usb_commands.insert(unsigned(response[i]) << 8 | response[i + 1]);
+    ready = ready && usb_commands.count(1001) && usb_commands.count(1002);
+    if (ready && usb_transaction(chameleon_frame(1002), response) == OK &&
+        usb_success(response, 0x68) && response.size() == 11 && response[9] <= 1)
+        original_mode = response[9];
+    else ready = false;
+    return ready;
+}
 void hardware_poll() {
     static bool usb_powered = false;
     static bool usb_installed = false;
@@ -500,35 +525,42 @@ void hardware_poll() {
     peripheral_changed(2, uhf_present, "jrd4035",
         uhf_present ? std::vector<std::string>{"m100"} : std::vector<std::string>{});
     if (usb_gone && usb) {
+        if (ultra_mode_uncertain) usb_quarantined = true;
         clear_usb_reads();
         usb_commands.clear();
         cdc_acm_host_close(usb); usb = nullptr; original_mode = -1;
         { std::lock_guard<std::mutex> guard(usb_mutex); std::fill(usb_rx.begin(), usb_rx.end(), 0); usb_rx.clear(); }
         peripheral_changed(3, false, "chameleon", {});
     }
-    if (usb_powered && !usb && !usb_quarantined) {
+    if (selected_transport == UltraTransport::Bluetooth) {
+        const bool available = nus_subscribed();
+        if (!available && ble_validated) {
+            if (ultra_mode_uncertain) usb_quarantined = true;
+            ble_validated = false; original_mode = -1; clear_usb_reads(); usb_commands.clear();
+            peripheral_changed(3, false, "chameleon", {});
+        }
+        if (available && !ble_validated && !usb_quarantined) {
+            ble_validated = validate_ultra(); nus_validated(ble_validated);
+            if (ble_validated) {
+                std::vector<std::string> caps{"chameleon"};
+                if (usb_commands.count(2000) && usb_commands.count(2008)) {
+                    caps.push_back("classic1k"); caps.push_back("classic4k");
+                }
+                if (usb_commands.count(3016)) caps.push_back("t5577_password_free");
+                peripheral_changed(3, true, "chameleon", caps);
+            } else { usb_commands.clear(); original_mode = -1; }
+        }
+    }
+    if (selected_transport == UltraTransport::Usb && usb_powered && !usb && !usb_quarantined && !usb_opened_for_selection) {
         usb_gone = false;
         cdc_acm_host_device_config_t cfg{};
         cfg.connection_timeout_ms = 10; cfg.out_buffer_size = 2048; cfg.in_buffer_size = 2048;
         cfg.event_cb = usb_event; cfg.data_cb = usb_data;
         if (cdc_acm_host_open(0x6868, 0x8686, 0, &cfg, &usb) == ESP_OK) {
+            usb_opened_for_selection = true;
             cdc_acm_line_coding_t coding{115200, 0, 0, 8};
             bool ready = cdc_acm_host_line_coding_set(usb, &coding) == ESP_OK &&
-                cdc_acm_host_set_control_line_state(usb, true, true) == ESP_OK &&
-                usb_transaction(chameleon_frame(1000), response) == OK &&
-                usb_success(response, 0x68) && response.size() == 12 && response[9] == 2;
-            ready = ready && usb_transaction(chameleon_frame(1033), response) == OK &&
-                usb_success(response, 0x68) && response.size() == 11 && response[9] == 0;
-            ready = ready && usb_transaction(chameleon_frame(1035), response) == OK &&
-                usb_success(response, 0x68) && response.size() > 10 && (response.size() - 10) % 2 == 0;
-            usb_commands.clear();
-            if (ready) for (size_t i = 9; i + 1 < response.size() - 1; i += 2)
-                usb_commands.insert(unsigned(response[i]) << 8 | response[i + 1]);
-            ready = ready && usb_commands.count(1001) && usb_commands.count(1002);
-            if (ready && usb_transaction(chameleon_frame(1002), response) == OK &&
-                usb_success(response, 0x68) && response.size() == 11 && response[9] <= 1)
-                original_mode = response[9];
-            else ready = false;
+                cdc_acm_host_set_control_line_state(usb, true, true) == ESP_OK && validate_ultra();
             if (ready) {
                 std::vector<std::string> caps{"chameleon"};
                 if (usb_commands.count(2000) && usb_commands.count(2008)) {
@@ -546,7 +578,7 @@ void hardware_local_uhf_handler(std::function<void(const Bytes&)> handler) {
 }
 bool hardware_command_supported(uint8_t channel, uint16_t command) {
     if (channel == 1) return hf && command >= 16 && command <= 23;
-    if (channel == 3) return usb && !usb_gone && !usb_quarantined && usb_commands.count(command);
+    if (channel == 3) return !usb_quarantined && (selected_transport == UltraTransport::Bluetooth ? ble_validated && nus_subscribed() : usb && !usb_gone) && usb_commands.count(command);
     if (channel != 2) return false;
     switch (command) {
     case 3: case 8: case 11: case 12: case 18: case 34: case 40:
@@ -574,7 +606,7 @@ Status hardware_release_channel(uint8_t channel) {
     if (channel != 3) return INVALID_ARGUMENT;
     clear_usb_reads();
     if (usb_quarantined) return IO_ERROR;
-    if (usb && original_mode >= 0) {
+    if ((selected_transport == UltraTransport::Bluetooth ? ble_validated : usb != nullptr) && original_mode >= 0) {
         Bytes acknowledgement, reply;
         bool restored = usb_transaction(chameleon_frame(1001, {uint8_t(original_mode)}), acknowledgement) == OK;
         restored = restored && usb_transaction(chameleon_frame(1002), reply) == OK &&
@@ -584,7 +616,26 @@ Status hardware_release_channel(uint8_t channel) {
             peripheral_changed(3, false, "chameleon", {});
             return IO_ERROR;
         }
+        ultra_mode_uncertain = false;
     }
+    return OK;
+}
+Status hardware_select_transport(UltraTransport transport) {
+    // The worker serializes this after checking both bridge and local ownership idle.
+    if (usb_quarantined) return IO_ERROR;
+    const auto released = hardware_release_channel(3);
+    if (released != OK) return released;
+    if (usb) { cdc_acm_host_close(usb); usb = nullptr; }
+    nus_cancel();
+    const auto deadline = esp_timer_get_time() + 2000000;
+    while (!nus_idle() && esp_timer_get_time() < deadline) vTaskDelay(pdMS_TO_TICKS(5));
+    if (!nus_idle()) { usb_quarantined = true; peripheral_invalidate(3); return IO_ERROR; }
+    clear_usb_reads(); usb_commands.clear(); original_mode = -1; ble_validated = false;
+    usb_opened_for_selection = false;
+    { std::lock_guard<std::mutex> guard(usb_mutex); usb_rx.clear(); }
+    selected_transport = transport;
+    peripheral_invalidate(3);
+    // Bluetooth selection never changes usb_host_approved or enables VBUS.
     return OK;
 }
 Status operate(const Frame& f, Bytes& out) {

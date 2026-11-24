@@ -2,6 +2,7 @@
 #include "framebuffer.hpp"
 #include <cassert>
 #include <iostream>
+#include <utility>
 
 using namespace qb::zero;
 int main() {
@@ -24,6 +25,16 @@ int main() {
     }
     translator.reset();
     assert(translator.evdev(30, 1)->character == 'a');
+    translator.reset();
+    assert(!translator.evdev(389,1));
+    for (const auto& arrow : {std::pair<unsigned,Key>{103,Key::Up},
+                             {108,Key::Down},{105,Key::Left},{106,Key::Right}}) {
+        auto down=translator.evdev(arrow.first,1);
+        auto up=translator.evdev(arrow.first,0);
+        assert(down && up && down->pressed && !up->pressed);
+        assert(down->key==arrow.second && up->key==arrow.second);
+    }
+    assert(!translator.evdev(389,0));
     FramebufferLayout layout{320,170,320,170,0,0,640,16,11,5,0,5,6,5,640*170};
     layout.validate(); assert(layout.convert(0xf800) == 0xf800 && layout.convert(0x07e0) == 0x07e0);
     layout = {320,170,400,200,8,2,1600,32,16,8,0,8,8,8,1600*200};

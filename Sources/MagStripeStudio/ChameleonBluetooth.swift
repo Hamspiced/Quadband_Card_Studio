@@ -15,15 +15,36 @@ struct ChameleonBluetoothDevice: Identifiable {
     let name: String
     var id: UUID { peripheral.identifier }
 }
+
+struct ChameleonDiscoverySnapshot {
+    private var peers: [UUID:Date] = [:]
+    mutating func reset() { peers.removeAll() }
+    mutating func record(_ id: UUID, now: Date = Date()) { peers[id] = now }
+    func contains(_ id: UUID, now: Date = Date()) -> Bool {
+        guard let seen = peers[id] else { return false }
+        return now >= seen && now.timeIntervalSince(seen) <= 30
+    }
+}
 @MainActor final class ChameleonBluetooth: NSObject, ObservableObject, CBCentralManagerDelegate {
     @Published var devices: [ChameleonBluetoothDevice] = []
     @Published var scanning = false
+    @Published private(set) var discoveryRevision = UUID()
     @Published var message = "Wake the Chameleon, close other Chameleon apps, then scan."
     private var central: CBCentralManager?
     private var channel: ChameleonBLEChannel?
+    private var retiring: CBPeripheral?
     private var wantsScan = false
     private var timer: Task<Void,Never>?
+    private var discovery = ChameleonDiscoverySnapshot()
+    func canConnect(_ id: UUID?) -> Bool {
+        guard let id else { return false }
+        return !scanning && discovery.contains(id)
+    }
+    private func resetDiscovery() {
+        devices = []; discovery.reset(); discoveryRevision = UUID()
+    }
     func scan() {
+        stop(); resetDiscovery()
         wantsScan = true
         if central == nil { central = CBCentralManager(delegate:self,queue:.main) } else { updateState() }
     }
@@ -47,25 +68,35 @@ struct ChameleonBluetoothDevice: Identifiable {
         default: message = "Starting Bluetooth…"
         }
         if central.state != .poweredOn { channel?.lost(StripeError(message)) }
+        if central.state != .poweredOn { resetDiscovery() }
     }
     private func found(_ peripheral: CBPeripheral, name: String?) {
+        guard wantsScan && scanning else { return }
+        discovery.record(peripheral.identifier)
         guard !devices.contains(where: { $0.id == peripheral.identifier }) else { return }
         devices.append(ChameleonBluetoothDevice(peripheral:peripheral,name:name ?? peripheral.name ?? "UART device · \(peripheral.identifier.uuidString.prefix(8))"))
     }
     func connect(_ id: UUID) async throws -> ChameleonBLEChannel {
-        guard let central, central.state == .poweredOn, let device = devices.first(where: { $0.id == id }) else { throw StripeError("Scan and select your Bluetooth Chameleon first.") }
-        stop(); channel?.close(); channel = nil
+        guard let central, central.state == .poweredOn, discovery.contains(id),
+              let device = devices.first(where: { $0.id == id }) else { throw StripeError("Bluetooth results expired. Scan and select your Chameleon again.") }
+        stop()
+        if let channel { retiring = channel.peripheral; channel.close(); self.channel = nil }
         let deadline = Date().addingTimeInterval(4)
-        while device.peripheral.state == .disconnecting {
+        while device.peripheral.state == .disconnecting || (retiring != nil && retiring?.state != .disconnected) {
             try await Task.sleep(nanoseconds:50_000_000)
             guard Date() < deadline else { throw StripeError("Bluetooth is still disconnecting. Try again shortly.") }
         }
+        retiring = nil
         try Task.checkCancellation()
         let value = ChameleonBLEChannel(peripheral:device.peripheral,central:central); channel = value
         value.onProgress = { [weak self] text in self?.message = text }
         do { try await value.open(); return value } catch { value.close(); throw error }
     }
-    func close() { stop(); channel?.close(); channel = nil }
+    func close() {
+        stop()
+        if let channel { retiring = channel.peripheral; channel.close(); self.channel = nil }
+        resetDiscovery()
+    }
     nonisolated func centralManagerDidUpdateState(_ central: CBCentralManager) { MainActor.assumeIsolated { updateState() } }
     nonisolated func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral, advertisementData: [String:Any], rssi RSSI: NSNumber) {
         MainActor.assumeIsolated {
@@ -120,8 +151,10 @@ struct ChameleonBluetoothDevice: Identifiable {
         guard !closed else { return }
         let native = error as NSError
         let reported: Error
-        if native.domain == CBATTErrorDomain && [5,15].contains(native.code) {
+        if native.domain == CBATTErrorDomain && [5,8,15].contains(native.code) {
             reported = StripeError("Bluetooth pairing is required. macOS did not establish an encrypted connection. Reconnect and complete its PIN prompt if shown. If no prompt appears, use USB to check the Chameleon pairing configuration. No security settings were changed.")
+        } else if native.domain == CBErrorDomain {
+            reported = StripeError("Bluetooth connection or pairing failed. Keep the selected reader awake, complete the system pairing prompt, then scan and reconnect. Check Bluetooth permissions and close other reader apps. No security settings were changed.")
         } else { reported = error }
         let callback = onDisconnect; finishOpening(reported); close(); callback?(reported)
     }
@@ -140,6 +173,10 @@ struct ChameleonBluetoothDevice: Identifiable {
         // Conservative chunks also work with firmware negotiating the minimum ATT MTU.
         let size = min(20,peripheral.maximumWriteValueLength(for:type))
         guard size > 0 else { throw StripeError("Bluetooth transmission is still in progress.") }
+        guard outgoing.count + (bytes.count + size - 1) / size <= 256 else {
+            let error = StripeError("Bluetooth transmit queue overflowed. Reconnect before trying again.")
+            lost(error); throw error
+        }
         outgoing += stride(from:0,to:bytes.count,by:size).map { Data(bytes[$0..<min($0+size,bytes.count)]) }; pump()
     }
     private func pump() {
@@ -149,6 +186,7 @@ struct ChameleonBluetoothDevice: Identifiable {
     }
     nonisolated func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         MainActor.assumeIsolated {
+            guard !closed else { return }
             if let error { lost(error); return }
             guard let service = peripheral.services?.first(where: { $0.uuid == nusService }) else { lost(StripeError("This device does not provide the Chameleon Bluetooth UART service.")); return }
             peripheral.discoverCharacteristics([nusRX,nusTX],for:service)
@@ -180,16 +218,20 @@ struct ChameleonBluetoothDevice: Identifiable {
             onProgress?("Checking Bluetooth security. Complete the macOS PIN prompt if one appears.")
             if let battery { peripheral.readValue(for:battery) }
         case .subscribe:
+            onProgress?("Subscribing to Chameleon Bluetooth notifications…")
             if let reader { peripheral.setNotifyValue(true,for:reader) }
         case .ready:
-            ready = true; onProgress?("Chameleon Bluetooth channel is ready."); finishOpening()
+            ready = true; onProgress?("Validating Chameleon identity and capabilities…"); finishOpening()
         case .none: break
         }
     }
     nonisolated func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
         MainActor.assumeIsolated {
             if let error { lost(error); return }
-            if characteristic === reader && characteristic.isNotifying { performSetup(setup.subscribed()) }
+            if characteristic === reader {
+                guard characteristic.isNotifying else { lost(StripeError("Bluetooth notifications stopped. Scan and reconnect.")); return }
+                performSetup(setup.subscribed())
+            }
         }
     }
     nonisolated func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {

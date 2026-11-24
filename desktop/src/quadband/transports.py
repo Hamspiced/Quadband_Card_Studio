@@ -1,15 +1,10 @@
 """Windows/Linux USB, serial and Bluetooth. SPDX-License-Identifier: GPL-3.0-only"""
 import asyncio
-import sys
 from .common import CardError, require
 from .magstripe import hid_packets
-
-NUS = '6e400001-b5a3-f393-e0a9-e50e24dcca9e'
-NUS_RX = NUS.replace('0001-', '0002-')
-NUS_TX = NUS.replace('0001-', '0003-')
-X6 = '0000ff00-0000-1000-8000-00805f9b34fb'
-X6_RX = X6.replace('ff00-', 'ff02-')
-X6_TX = X6.replace('ff00-', 'ff01-')
+from .bluetooth import BLEChannel as BLEChannel, ble_devices as ble_devices
+from .bluetooth import NUS as NUS, NUS_RX as NUS_RX, NUS_TX as NUS_TX
+from .bluetooth import X6 as X6, X6_RX as X6_RX, X6_TX as X6_TX
 
 
 def serial_devices():
@@ -22,17 +17,6 @@ def hid_devices():
     return [(d['path'], f"{d.get('product_string') or 'MSR writer'} · {d['vendor_id']:04X}:{d['product_id']:04X}")
             for d in hid.enumerate() if not (d.get('usage_page') == 1 and d.get('usage') == 6)
             and (d['vendor_id'] == 0x0801 or 'msr' in str(d.get('product_string', '')).lower())]
-
-
-async def ble_devices(chameleon=False):
-    from bleak import BleakScanner
-    found = await BleakScanner.discover(timeout=6, return_adv=True)
-    service = NUS if chameleon else X6
-    return [(device, f'{adv.local_name or device.name or "Reader"} · {device.address}')
-            for device, adv in found.values()
-            if service in [s.lower() for s in adv.service_uuids]
-            or ('chameleon' if chameleon else 'msr') in (adv.local_name or device.name or '').lower()
-            or (not chameleon and 'x6' in (adv.local_name or device.name or '').lower())]
 
 
 class SerialChannel:
@@ -92,61 +76,6 @@ class HIDChannel:
             self.device.close()
 
 
-class BLEChannel:
-    framed_hid = False
-
-    def __init__(self):
-        self.queue = asyncio.Queue()
-        self.client = None
-
-    @classmethod
-    async def connect(cls, device, chameleon=False, progress=lambda _: None):
-        from bleak import BleakClient
-        self = cls()
-        def disconnected(_):
-            self.queue.put_nowait(CardError('Bluetooth disconnected. Reconnect before trying again.'))
-        self.client = BleakClient(device, disconnected_callback=disconnected,
-                                 pair=chameleon and sys.platform != 'darwin', timeout=90)
-        self.rx = NUS_RX if chameleon else X6_RX
-        tx = NUS_TX if chameleon else X6_TX
-        try:
-            progress('Connecting Bluetooth; complete a system PIN prompt if it appears.')
-            await self.client.connect()
-            if chameleon:
-                battery = self.client.services.get_characteristic('00002a19-0000-1000-8000-00805f9b34fb')
-                if battery and 'read' in battery.properties:
-                    progress('Checking the protected Bluetooth connection…')
-                    await self.client.read_gatt_char(battery)
-            characteristic = self.client.services.get_characteristic(self.rx)
-            require(characteristic is not None, 'The expected Bluetooth UART is unavailable.')
-            self.response = 'write' in characteristic.properties
-            require(self.response or 'write-without-response' in characteristic.properties,
-                    'This Bluetooth characteristic cannot receive commands.')
-            self.chunk = 20  # Conservative across negotiated MTUs and both device families.
-            await self.client.start_notify(tx, lambda _, data: self.queue.put_nowait(bytes(data)))
-            return self
-        except BaseException:
-            await self.close()
-            raise
-
-    async def send(self, message):
-        require(self.client and self.client.is_connected, 'Bluetooth is disconnected.')
-        for i in range(0, len(message), self.chunk):
-            await self.client.write_gatt_char(self.rx, message[i:i+self.chunk], response=self.response)
-            if not self.response:
-                await asyncio.sleep(.015)
-
-    async def receive(self):
-        value = await self.queue.get()
-        if isinstance(value, Exception):
-            raise value
-        return value
-
-    async def close(self):
-        if self.client and self.client.is_connected:
-            await self.client.disconnect()
-
-
 class FramedConnection:
     """One outstanding exchange, with permanent close on timeout/protocol error.
 
@@ -157,6 +86,7 @@ class FramedConnection:
         self.progress = progress or (lambda _: None)
         self.pending = None
         self.on_frame = lambda frame: None
+        self.on_disconnect = lambda error: None
         self.closed = False
         self.reader = asyncio.create_task(self._read())
 
@@ -167,6 +97,8 @@ class FramedConnection:
                     consumed = self.on_frame(frame)
                     if consumed:
                         continue
+                    require(self.pending is not None and not self.pending[1].done(),
+                            'Unexpected reader response. Reconnect.')
                     if self.pending and not self.pending[1].done():
                         command, future = self.pending
                         require(frame.command == command, 'Unexpected reader response. Reconnect.')
@@ -174,10 +106,16 @@ class FramedConnection:
         except asyncio.CancelledError:
             return
         except Exception as exc:
+            was_closed = self.closed
             self.closed = True
+            if not was_closed:
+                self.on_disconnect(exc)
             if self.pending and not self.pending[1].done():
                 self.pending[1].set_exception(exc)
-            await self.channel.close()
+            try:
+                await self.channel.close()
+            except Exception as cleanup:
+                self.progress(str(cleanup))
             self.progress(str(exc))
 
     async def exchange(self, command, data=b'', timeout=3):
@@ -195,7 +133,10 @@ class FramedConnection:
             self.pending = None
 
     async def close(self):
+        was_closed = self.closed
         self.closed = True
+        if not was_closed:
+            self.on_disconnect(CardError('Reader connection closed. Reconnect before trying again.'))
         self.reader.cancel()
         if self.pending and not self.pending[1].done():
             self.pending[1].cancel()

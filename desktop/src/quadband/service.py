@@ -2,6 +2,7 @@
 import asyncio
 from contextlib import asynccontextmanager
 from .common import require
+from .bluetooth import BluetoothCleanupError
 from . import transports, magstripe, chameleon, uhf, m100, pcsc, cores3
 
 
@@ -12,6 +13,10 @@ class Service:
         self.bridge = None
         self.bridge_changed = lambda _: None
         self.bridge_leases = {}
+        self.reader_disconnected = lambda family, message: None
+        self._sessions = {}
+        self._unclean_readers = set()
+        self._channels = {}
 
     async def connect_bridge(self, device):
         await self.disconnect_bridge()
@@ -62,7 +67,11 @@ class Service:
         return transports.serial_devices()
 
     async def disconnect(self, family):
+        require(family not in self._unclean_readers,
+                'Reader cleanup could not be confirmed. Restart the application before reconnecting.')
+        self._sessions.pop(family, None)
         device = getattr(self, family)
+        channel = self._channels.pop(family, None)
         setattr(self, family, None)
         try:
             if device:
@@ -70,10 +79,17 @@ class Service:
                     await device.channel.close()
                 else:
                     await device.close()
+            elif channel:
+                await channel.close()
+        except BluetoothCleanupError:
+            self._unclean_readers.add(family)
+            raise
         finally:
             lease = self.bridge_leases.pop(family, None)
             if lease:
                 await lease.__aexit__(None, None, None)
+            if device:
+                self.reader_disconnected(family, 'Reader disconnected.')
         return 'Reader disconnected.'
 
     async def connect(self, family, mode, device, baud, address=0, reader_profile='Piswords UHF2'):
@@ -85,12 +101,25 @@ class Service:
             require(mode == 'USB serial', 'UHF modules require a USB-serial connection.')
             require(reader_profile in ('Piswords UHF2', 'M5Stack JRD-4035', 'YRM100'), 'Choose a supported UHF reader profile.')
         await self.disconnect(family)
+        token = object()
+        self._sessions[family] = token
+        def lost(error):
+            if self._sessions.get(family) is token:
+                self._sessions.pop(family, None)
+                setattr(self, family, None)
+                self.reader_disconnected(family, str(error))
         if mode == 'Bluetooth':
-            channel = await transports.BLEChannel.connect(device, family == 'chameleon', self.progress)
+            try:
+                channel = await transports.BLEChannel.connect(
+                    device, family == 'chameleon', self.progress, on_disconnect=lost)
+            except BluetoothCleanupError:
+                self._unclean_readers.add(family)
+                raise
         elif mode == 'USB HID':
             channel = transports.HIDChannel(device)
         else:
             channel = transports.SerialChannel(device, baud)
+        self._channels[family] = channel
         client = None
         try:
             if family == 'msr':
@@ -104,19 +133,30 @@ class Service:
             else:
                 connection = transports.FramedConnection(channel, uhf.Decoder(), lambda cmd, data: uhf.encode(cmd, data, address), self.progress)
                 client = uhf.UHF(connection, address)
+            if family != 'msr':
+                connection.on_disconnect = lost
             label = await client.connect()
+            require(self._sessions.get(family) is token, 'Reader disconnected while validating. Scan and reconnect.')
             setattr(self, family, client)
             return label
         except BaseException:
-            if family != 'msr' and client is not None:
-                await client.close()
-            else:
-                await channel.close()
+            try:
+                if family != 'msr' and client is not None:
+                    await client.close()
+                else:
+                    await channel.close()
+            except BluetoothCleanupError:
+                self._unclean_readers.add(family)
+                raise
             raise
 
     def require(self, family):
         device = getattr(self, family)
         require(device is not None, 'Connect the reader first.')
+        transport = getattr(device, 'transport', None)
+        channel = getattr(device, 'channel', None)
+        require(not getattr(transport, 'closed', False) and not getattr(channel, 'closed', False),
+                'Reader disconnected. Reconnect it.')
         return device
 
     @asynccontextmanager

@@ -4,6 +4,26 @@ on:
 permissions:
   contents: read
 jobs:
+  bluetooth-runtime:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        bleak: ["0.22.3", "3.0.2"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: "3.12"
+      - name: Supported Bluetooth client runtime
+        env:
+          BLEAK_VERSION: ${{ matrix.bleak }}
+        run: python -m pip install "bleak==$BLEAK_VERSION"
+      - name: Device-free helper and package regressions
+        run: python -m unittest discover -s devices/cardputerzero/tests -p 'test_*.py'
   test-and-package:
     runs-on: ubuntu-24.04
     timeout-minutes: 35
@@ -29,8 +49,8 @@ jobs:
           python devices/cardputerzero/build.py --device --zig "$PWD/.build/zero-toolchain/zig-x86_64-linux-0.15.1/zig"
           python devices/cardputerzero/package.py --zig-root "$PWD/.build/zero-toolchain/zig-x86_64-linux-0.15.1"
           python -m unittest discover -s devices/cardputerzero/tests -p 'test_*.py'
-          dpkg-deb --info dist/quadband-cardputerzero_0.3.0_arm64.deb
-          dpkg-deb --contents dist/quadband-cardputerzero_0.3.0_arm64.deb
+          dpkg-deb --info dist/quadband-cardputerzero_0.4.0_arm64.deb
+          dpkg-deb --contents dist/quadband-cardputerzero_0.4.0_arm64.deb
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: Quadband-CardputerZero-development

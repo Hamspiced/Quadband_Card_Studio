@@ -32,6 +32,7 @@ void ble_pair_approve(bool, uint64_t expected_challenge = 0);
 void ble_clear_bonds();
 void receive(const uint8_t*, size_t);
 void disconnected();
+void peripheral_invalidate(unsigned);
 void peripheral_changed(unsigned, bool, const std::string&, const std::vector<std::string>&);
 std::string capabilities();
 std::string hex(const uint8_t*, size_t);

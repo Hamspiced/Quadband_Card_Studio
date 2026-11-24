@@ -103,6 +103,34 @@ struct Fixture {
     }
 };
 
+void ultra_selection_and_pin() {
+    Fixture f; f.settings(); f.ui.touch(40, 150);
+    assert(f.ui.page() == Page::Ultra);
+    assert(f.ui.touch(40, 140) == UiAction::UltraScan);
+    assert(f.ui.touch(220, 140) == UiAction::UltraUsb);
+    f.state.ultra.phase = qb::UltraPhase::Selecting; f.state.ultra.count = 6;
+    for (unsigned i = 0; i < 6; ++i)
+        std::snprintf(f.state.ultra.peers[i].label,40,"NUS selected candidate %u",i);
+    f.update();
+    for (unsigned i=0;i<6;++i)
+        assert(f.ui.touch(40,90+int(i)*20) == UiAction(unsigned(UiAction::UltraPeer0)+i));
+    f.state.busy = true; f.update(); assert(f.ui.touch(40,90)==UiAction::None);
+    f.state.busy = false; f.state.ultra.phase = qb::UltraPhase::Pairing;
+    f.state.ultra.challenge = 91; std::snprintf(f.state.ultra.selected.label,40,"Selected Ultra peer label");
+    f.update(); assert(f.ui.modal()==Modal::UltraPin);
+    assert(f.ui.touch(40,215)==UiAction::None);
+    for(unsigned i=0;i<6;++i) f.ui.touch(20,100);
+    assert(f.ui.touch(40,215)==UiAction::UltraPin);
+    assert(!f.surface.saw(std::string(6,'0')));
+    char digits[7]{}; f.ui.take_ultra_pin(digits);
+    assert(std::all_of(digits,digits+6,[](char c){return c=='0';}) && !digits[6]);
+    std::fill_n(digits,7,0); f.ui.take_ultra_pin(digits);
+    assert(std::all_of(digits,digits+7,[](char c){return !c;}));
+    for(unsigned i=0;i<6;++i) f.ui.touch(20,100);
+    ++f.state.ultra.challenge; f.update(); assert(f.ui.touch(40,215)==UiAction::None);
+    assert(f.ui.touch(150,180)==UiAction::UltraDisconnect);
+    f.state.pairing_pending=true; f.update(); assert(f.ui.modal()==Modal::Pairing);
+}
 void home_and_authority() {
     Fixture f;
     f.state.last_status = qb::IO_ERROR; f.update();
@@ -323,6 +351,7 @@ int main(int argc, char** argv) {
         if (color != 0 && color != 0xffffff) antialiased = true;
     });
     assert(antialiased);
+    ultra_selection_and_pin();
     home_and_authority();
     standalone_navigation();
     modal_priority();

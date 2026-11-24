@@ -1,6 +1,7 @@
 #pragma once
 #include "bridge.hpp"
 #include "local_model.hpp"
+#include "ultra_link.hpp"
 
 namespace qb {
 enum class WorkMode : uint8_t { Home, Connected, Standalone };
@@ -32,7 +33,8 @@ enum class UiAction : uint8_t {
     None, ChooseConnected, ChooseStandalone, ChooseHome, ConfirmMode, CancelMode,
     OpenPairing, ApprovePairing, RejectPairing, RequestUsbHost, ConfirmUsbHost,
     CancelUsbHost, RequestClearBonds, ConfirmClearBonds, CancelClearBonds,
-    Stop, ToggleTheme, Refresh, LocalRequest
+    Stop, ToggleTheme, Refresh, LocalRequest, UltraScan, UltraUsb, UltraDisconnect, UltraPin,
+    UltraPeer0, UltraPeer1, UltraPeer2, UltraPeer3, UltraPeer4, UltraPeer5
 };
 
 struct UiSnapshot {
@@ -54,11 +56,14 @@ struct UiSnapshot {
     std::array<Slot, 3> peripherals;
     std::string message;
     local::View local;
+    UltraView ultra;
+    UltraTransport ultra_transport = UltraTransport::Usb;
 };
 
 class TouchGate {
     uint64_t presentation_ = UINT64_MAX, challenge_ = 0, local_review_ = 0;
     bool armed_ = false;
+    uint64_t ultra_epoch_ = 0, ultra_challenge_ = 0;
 public:
     bool permit(const UiSnapshot&, bool pressed, bool touching);
 };
@@ -69,5 +74,6 @@ void initialize();
 void update(const UiSnapshot&);
 UiAction touch(int x, int y);
 local::Intent take_local_intent();
+void take_ultra_pin(char (&digits)[7]);
 }
 }

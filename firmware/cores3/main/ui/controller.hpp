@@ -7,8 +7,8 @@
 #include <cstdint>
 
 namespace qb::ui {
-enum class Page : uint8_t { Dashboard, Uhf, Hf, Lf, Files, Settings, Diagnostics };
-enum class Modal : uint8_t { None, Pairing, Mode, Usb, Bonds };
+enum class Page : uint8_t { Dashboard, Uhf, Hf, Lf, Files, Settings, Diagnostics, Ultra };
+enum class Modal : uint8_t { None, Pairing, Mode, Usb, Bonds, UltraPin };
 
 class Controller {
 public:
@@ -20,6 +20,7 @@ public:
     Modal modal() const;
     size_t command_count() const { return count_; }
     local::Intent take_local_intent();
+    void take_ultra_pin(char (&digits)[7]);
 private:
     enum class Ink : uint8_t { Fill, Text, Logo, Panel };
     struct Command {
@@ -62,6 +63,10 @@ private:
     size_t count_ = 0, previous_count_ = 0, hit_count_ = 0;
     State state_{};
     local::View local_{};
+    UltraView ultra_{};
+    UltraTransport transport_ = UltraTransport::Usb;
+    char pin_[7]{};
+    size_t pin_size_ = 0;
     local::Intent pending_intent_;
     ToolsUi tools_;
     bool tools_obscured_ = true;
@@ -86,6 +91,7 @@ private:
     void detail();
     void settings();
     void diagnostics();
+    void ultra();
     void overlay();
 };
 }

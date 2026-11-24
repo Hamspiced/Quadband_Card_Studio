@@ -62,7 +62,9 @@ pending callbacks and queued work on disconnect.
 Channels, capabilities and sessions
 -----------------------------------
 
-Channels are control 0, Grove HF 1, Grove UHF 2 and USB Chameleon 3.
+Channels are control 0, Grove HF 1, Grove UHF 2 and Chameleon 3. Channel 3
+uses one locally selected USB or Bluetooth transport; it is not a separate
+reader or ownership lease for each transport.
 
 Control operations:
 
@@ -110,9 +112,9 @@ Always include all three peripheral slots. ``kind`` for HF is ``rfid``,
 ``rfid2`` or ``unknown``. Only advertise implemented and detected
 capabilities. ``ntag_auth`` is an additional capability when supplied-password
 authentication is implemented. Unknown HF silicon is not write-capable.
-The present UHF slot advertises ``m100``; the present USB Ultra slot
+The present UHF slot advertises ``m100``; the present Ultra slot
 advertises ``chameleon`` only after its actual model/command list is checked.
-Additional USB capability strings such as ``classic4k`` and
+Additional Chameleon capability strings such as ``classic4k`` and
 ``t5577_password_free`` must also reflect real command support.
 
 Firmware 0.2.0 adds optional mode metadata without changing version-1 framing:
@@ -282,7 +284,7 @@ before sending. Power is 1800–2600 hundredths dBm. Writes are at most 32
 words, User or EPC after its CRC word; region/lock/kill/Reserved/TID writes
 are never forwarded.
 
-USB Chameleon allowlist for the existing application: 1000, 1001, 1002,
+Chameleon allowlist for either transport in the existing application: 1000, 1001, 1002,
 1017, 1033, 1035, 2000, 2008, 2009, 3000, 3002, 3004, 3010, 3014,
 3016, 3019 and 3021. Validate the existing payload layouts; reject malformed
 requests, emulation/flash commands, all legacy password-setting LF writers,
@@ -292,12 +294,21 @@ identity before mutation. Never permit block 0 or trailers. Command 3016
 must satisfy the existing password-free T5577 policy: exactly 11 bytes,
 block 0–6, final six bytes zero, and PWD bit clear in config writes.
 
-The USB Chameleon continues to advertise its real command capabilities
+The selected Chameleon continues to advertise its real command capabilities
 through command 1035; neither firmware nor desktop invents missing command
 support. NTAG support in version 1 is supplied through the Grove HF module;
-do not claim USB Chameleon NTAG writes until an explicitly guarded adapter
+do not claim Chameleon NTAG writes until an explicitly guarded adapter
 exists. Preserve the Chameleon's original device mode on normal release.
 HF/LF operations use one exclusive lease; never interleave them.
+
+A local change of Chameleon peer or USB/Bluetooth transport requires idle,
+verified cleanup and a new peripheral generation even when model and
+capabilities are identical. A Bluetooth reader link is distinct from the
+authenticated desktop bridge link. Losing either link must not misroute
+responses or reuse the other link's authorization. No automatic transport
+fallback, reconnection of physical operations or replay is permitted.
+Selecting Bluetooth does not authorize USB VBUS or change the command
+allowlist, framing, channel number or desktop ownership policy.
 
 Status values
 -------------

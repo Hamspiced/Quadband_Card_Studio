@@ -44,6 +44,7 @@ import MagStripeCore
     private var operationGeneration = 0
     private var writeAcknowledged = false
     private var hfBusyObservation: AnyCancellable?
+    private var lfConnectionObservation: AnyCancellable?
 
     enum StatusKind { case neutral, working, success, error }
     enum ReaderMode: String, CaseIterable { case keyboard = "MSR600 · Keyboard", writer = "MSR X6 / MSR605" }
@@ -79,6 +80,15 @@ import MagStripeCore
         }
         cores3.prepareDisconnect = { [weak lf,weak uhf] in await uhf?.releaseBridgeNormally(); await lf?.releaseBridgeNormally() }
         hfBusyObservation = nfc.$busy.sink { [weak lf] value in lf?.hfWorkflowBusy = value }
+        lfConnectionObservation = lf.$connected.removeDuplicates().sink { [weak self] ready in
+            guard let self, !ready else { return }
+            self.nfc.readers.removeAll { $0.hasPrefix("Chameleon Ultra · ") }
+            guard self.nfc.selectedReader.hasPrefix("Chameleon Ultra · ") else { return }
+            self.nfc.requiresExplicitReaderSelection = true
+            self.nfc.operation?.cancel(); self.nfc.selectedReader = ""; self.nfc.readerChanged()
+            self.nfc.status = "Chameleon disconnected. Reconnect, refresh and explicitly select its HF reader."
+            self.nfc.statusKind = .error
+        }
         nfc.autoDiscovery = scanDevices; uhf.autoDiscovery = scanDevices; lf.autoDiscovery = scanDevices
         if scanDevices { refresh() }
     }

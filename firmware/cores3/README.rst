@@ -3,7 +3,8 @@ CoreS3 reader bridge firmware
 
 Native ESP-IDF 5.5.3 application for M5Stack CoreS3 ESP32-S3.
 The shared version-1 wire contract is ``../../protocol/cores3-bridge-v1.rst``.
-The 0.4.0 bulk-NDEF build includes the preceding partial-redraw update; it has not been flashed
+The 0.5.0 development build adds selected Chameleon NUS Bluetooth transport
+and retains the 0.4.0 bulk-NDEF/partial-redraw work. It has not been flashed
 or visually verified on hardware. Version
 0.3.0 was flashed on request with split-image hash verification and NVS
 preserved. Serial startup confirmed 0.3.0, detected 8 MB PSRAM, passed its
@@ -45,10 +46,38 @@ Use **Settings** to open a 60-second pairing window. Numeric comparison
 or a displayed passkey requires the explicit **Approve** button on the
 pairing dialog; all other touches are ignored except **Reject**. Compare the
 displayed code with the desktop; expiry rejects the request. Bond reset is
-a separate confirmed Settings action. Only one connected client and one
-stored bond are configured. Legacy pairing/Just Works is not an accepted
+a separate confirmed Settings action that forgets only the desktop peer.
+One desktop peripheral link and one selected Ultra central link are supported,
+with two role-scoped bonds. Full bond storage fails closed; it never evicts
+a peer or clears all bonds. The legacy single desktop bond is migrated
+without re-pairing. Ambiguous or interrupted metadata requires review,
+not automatic bond deletion. Legacy pairing/Just Works is not an accepted
 security fallback: operation requires encrypted, MITM-authenticated,
 16-byte-key, bonded state.
+
+For an Ultra, open **Settings > Ultra USB / Bluetooth** and choose **Scan BLE**.
+The explicit scan lasts eight seconds and retains at most six NUS candidates.
+Choose the specific address-labeled peer within 30 seconds. Names/services
+are candidates, not trusted identities. If requested, enter the six-digit
+reader passkey on the local masked keypad and explicitly confirm the selected
+peer within 60 seconds. PINs are transient, never logged or persisted.
+There are no connection retries, automatic reconnect, transport failover or
+command replay. **Use USB** selects CDC again but does not authorize VBUS;
+USB host power still requires the independent physical confirmation above.
+Transport changes require idle bridge/local ownership and verified original
+mode cleanup. Every switch advances channel 3 generation, even if both
+readers have identical capabilities. Failed cleanup quarantines the reader.
+
+The central subscribes to Nordic UART notifications before validating the
+same 1000/1033/1035/1002 firmware/model/commands/original-mode sequence as USB.
+The bridge allowlist, device command list, read/write guards and cached-read
+requirements are shared across transports. GATT writes are acknowledged,
+fragmented at 20 bytes and never treated as protocol readiness. Twelve
+bounded notification fragments feed the worker; malformed, unsolicited,
+stale or overflowing replies close the selected link. Radio callbacks never
+perform card/RF/USB operations. Two-link heap, pairing, cancellation and
+coexistence behavior still require physical acceptance; host tests do not
+prove on-device radio support.
 
 The dedicated RX characteristic is write-with-response and encrypted/
 authenticated; the dedicated TX characteristic uses indications. A TX
@@ -168,6 +197,7 @@ Install/activate ESP-IDF **5.5.3**, then run from the repository root::
 
     . /path/to/esp-idf/export.sh
     python3 firmware/cores3/build.py
+    python3 firmware/cores3/tests/ble_run.py
     python3 firmware/cores3/tests/run.py
     python3 firmware/cores3/tests/ui_run.py
     python3 firmware/cores3/tests/standalone_run.py
