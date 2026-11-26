@@ -175,8 +175,9 @@ void Runtime::run() {
                 std::vector<BlePeer> peers;
                 if (status == OK) {
                     status = next->scan(peers);
-                    if (status != OK) detail = status == CANCELLED ? "Bluetooth scan canceled; scan again explicitly" :
-                        "Bluetooth scan failed; check adapter power, BlueZ permissions and runtime dependencies.";
+                    if (status != OK) detail = !next->detail().empty() ? next->detail() :
+                        status == CANCELLED ? "Bluetooth scan canceled; scan again explicitly" :
+                            "Bluetooth scan failed; check adapter power, BlueZ permissions and runtime dependencies.";
                 }
                 std::lock_guard<std::mutex> guard(mutex_);
                 state_.bluetooth.peers = std::move(peers); state_.bluetooth.pin = false;
@@ -263,15 +264,19 @@ void Runtime::run() {
                     std::lock_guard<std::mutex> guard(mutex_);
                     state_.connected = status == OK;
                     state_.detail = port_->detail();
+                    if (status != OK && job->config.ble_session && !job->config.ble_session->detail().empty())
+                        state_.detail = job->config.ble_session->detail();
                     if (job->config.ble_session && job->config.ble_session->cleanup_unverified()) {
                         ble_cleanup_failed_ = state_.cleanup_failed = true;
                         state_.connected = false;
-                        state_.detail = "Bluetooth cleanup unverified; restart before any transport change.";
+                        state_.detail = job->config.ble_session->detail().empty() ?
+                            "Bluetooth cleanup unverified; restart before any transport change." :
+                            job->config.ble_session->detail() + " Cleanup unverified; restart Quadband.";
                     }
                     if (!job->config.ultra_ble_token.empty()) {
                         state_.bluetooth.pin = false;
                         state_.bluetooth.state = status == OK ? "Ready: validated Chameleon Ultra (Bluetooth)" :
-                            "Bluetooth validation failed; disconnect and scan again";
+                            state_.detail;
                         ++state_.bluetooth.revision;
                     }
                 }
@@ -337,7 +342,9 @@ void Runtime::run() {
                 ble_cleanup_failed_ = state_.cleanup_failed = true;
                 state_.connected = false; state_.bluetooth.pin = false; state_.bluetooth.peers.clear();
                 state_.view.reader_present = false; state_.view.review = false; state_.view.review_token = 0;
-                state_.bluetooth.state = "Bluetooth cleanup unverified; restart application";
+                state_.bluetooth.state = ble_->detail().empty() ?
+                    "Bluetooth cleanup unverified; restart application" :
+                    ble_->detail() + " Cleanup unverified; restart Quadband.";
                 state_.detail = state_.bluetooth.state;
             }
             state_.pending = bool(queued_) || cancel_;

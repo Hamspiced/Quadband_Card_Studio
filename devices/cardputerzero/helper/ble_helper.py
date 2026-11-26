@@ -16,6 +16,48 @@ sys.path.insert(0, str(HERE))
 from ipc import (CONNECT, DISCONNECT, ERROR, EVENT, EXCHANGE, PIN, PREFLIGHT,  # noqa: E402
                  RESULT, SCAN, Pipe, ProtocolError)
 
+PHASES = {"preflight", "scanning", "select", "pairing", "pin", "connecting",
+          "subscribing", "validating", "exchange", "disconnect"}
+
+
+def failure_payload(phase, error):
+    """Send only fixed categories, never backend text, peer metadata or PINs."""
+    if phase not in PHASES:
+        phase = "preflight"
+    if isinstance(error, (TimeoutError, asyncio.TimeoutError)):
+        reason = "timeout"
+    elif isinstance(error, ImportError) or phase == "preflight":
+        reason = "dependencies"
+    elif isinstance(error, ProtocolError):
+        reason = "protocol"
+    elif isinstance(error, (AttributeError, TypeError, NotImplementedError)):
+        reason = "compatibility"
+    elif type(error).__name__ == "BluetoothCleanupError":
+        reason = "cleanup"
+    else:
+        name = getattr(error, "type", None) or getattr(error, "dbus_error", None)
+        reasons = {
+            "org.bluez.Error.AuthenticationFailed": "authentication",
+            "org.bluez.Error.AuthenticationCanceled": "authentication",
+            "org.bluez.Error.AuthenticationRejected": "authentication",
+            "org.bluez.Error.Rejected": "authentication",
+            "org.bluez.Error.AuthenticationTimeout": "timeout",
+            "org.bluez.Error.InProgress": "busy",
+            "org.bluez.Error.AlreadyConnected": "busy",
+            "org.bluez.Error.NotReady": "unavailable",
+            "org.bluez.Error.NotConnected": "unavailable",
+            "org.bluez.Error.ConnectionAttemptFailed": "unavailable",
+            "org.bluez.Error.NotPermitted": "permission",
+            "org.bluez.Error.NotAuthorized": "permission",
+            "org.freedesktop.DBus.Error.AccessDenied": "permission",
+            "org.freedesktop.DBus.Error.NoReply": "timeout",
+            "org.freedesktop.DBus.Error.UnknownObject": "unavailable",
+            "org.freedesktop.DBus.Error.UnknownMethod": "compatibility",
+            "org.freedesktop.DBus.Error.UnknownInterface": "compatibility",
+        }
+        reason = reasons.get(name, "transport") if isinstance(name, str) else "transport"
+    return f"ble:{phase}:{reason}".encode("ascii")
+
 
 def preflight():
     if sys.platform != "linux":
@@ -43,8 +85,11 @@ class Session:
         self.death = asyncio.Event()
         self.discovered_at = 0
         self.pin_challenge = False
+        self.phase = "preflight"
 
     async def event(self, name):
+        if name in PHASES:
+            self.phase = name
         await self.pipe.send(EVENT, self.session, self.request, name.encode("ascii"))
 
     def set_agent(self, agent):
@@ -196,15 +241,17 @@ class Session:
                 self.pipe.close()
 
     async def reply(self, kind, data):
+        self.phase = {PREFLIGHT: "preflight", SCAN: "scanning", CONNECT: "select",
+                      EXCHANGE: "exchange", DISCONNECT: "disconnect"}.get(kind, "preflight")
         try:
             result = await asyncio.wait_for(self.operation(kind, data), 55 if kind == CONNECT else 25)
             await self.pipe.send(RESULT, self.session, self.request, result)
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as error:
             self.failed = True
             # Never serialize backend exceptions: some include passkeys or raw peer metadata.
-            await self.pipe.send(ERROR, self.session, self.request, b"ble_failed_check_dependencies_permissions_pairing")
+            await self.pipe.send(ERROR, self.session, self.request, failure_payload(self.phase, error))
             raise ProtocolError("operation failed") from None
 
 

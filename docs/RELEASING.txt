@@ -18,6 +18,12 @@ Release builds use native macOS and Windows runners. PyInstaller does not cross-
 
 The native Mac build is ad-hoc signed for local use. Build artifacts are release candidates until native target-system tests, dependency-source provision and optional signing are complete.
 
+## CardputerZero-only releases
+
+Use an immutable `cardputerzero-vX.Y.Z` tag for a handheld-only update. These component tags are excluded from the desktop publisher's prepare job, so they do not attempt to match the desktop version or deploy the CoreS3 installer. Run the CardputerZero workflow explicitly at that tag, or identify a verified local ARM64 cross-build and its exact tagged source provenance.
+
+Attach the versioned Debian package, its SHA-256 sidecar, a complete source archive and a checksum manifest. Mark diagnostic-only builds as prereleases and not latest; do not replace the current stable desktop release. State explicitly when Bluetooth pairing remains unverified or the change improves diagnostics rather than resolving the connection. Do not move an existing component tag or bypass package/source checksum checks.
+
 ## CoreS3 browser installer hosting
 
 The browser installer is built from webflasher/ and hosted with the matching verified split firmware on GitHub Pages. The default project URL is https://Hamspiced.github.io/Quadband_Card_Studio/ . That URL becomes available only after the repository hosting setup and a successful stable-release deployment.

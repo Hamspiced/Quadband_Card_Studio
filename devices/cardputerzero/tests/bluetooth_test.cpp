@@ -12,7 +12,7 @@ int main() {
         std::string detail;
         assert(s->preflight(detail) == OK);
         std::vector<BlePeer> peers;
-        assert(s->scan(peers) == OK && peers.size() == 3 && peers[0].name == "One");
+        assert(s->scan(peers) == OK && peers.size() == 4 && peers[0].name == "One");
         assert(s->connect("arbitrary peer") == INVALID_ARGUMENT);
         assert(s->connect(std::string(16, 'a')) == OK);
         Bytes response;
@@ -64,11 +64,25 @@ int main() {
     }
     {
         auto s = session();
+        assert(s->connect(std::string(16, 'e')) != OK);
+        assert(s->cleanup_unverified());
+        assert(s->detail().find("pairing before PIN") != std::string::npos);
+        assert(s->detail().find("timeout") != std::string::npos);
+    }
+    {
+        auto s = session();
+        assert(s->connect(std::string(16, 'f')) != OK && s->cleanup_unverified());
+        assert(s->detail().find("sensitive") == std::string::npos);
+        assert(s->detail().find("withheld") != std::string::npos);
+    }
+    {
+        auto s = session();
         assert(s->connect(std::string(16, 'a')) == OK);
         Bytes response;
         assert(s->exchange(ultra_frame(2006), response, 500, [] { return false; }) == OK);
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
         assert(s->exchange(ultra_frame(2006), response, 500, [] { return false; }) == UNAVAILABLE);
+        assert(s->detail().find("between requests") != std::string::npos);
     }
     {
         Runtime runtime(true, [](const ReaderConfig& config, Progress progress) {
@@ -79,7 +93,7 @@ int main() {
         });
         assert(runtime.scan_bluetooth() && runtime.wait_idle(2000));
         auto snapshot = runtime.snapshot();
-        assert(snapshot.bluetooth.peers.size() == 3);
+        assert(snapshot.bluetooth.peers.size() == 4);
         ReaderConfig selected; selected.ultra_ble_token = std::string(16, 'd');
         assert(runtime.connect(selected) && runtime.wait_idle(2000));
         assert(runtime.snapshot().connected);
@@ -87,6 +101,19 @@ int main() {
         assert(runtime.disconnect() && runtime.wait_idle(2000));
         snapshot = runtime.snapshot();
         assert(snapshot.cleanup_failed && !snapshot.connected);
+        assert(!runtime.connect({}) && !runtime.detect({}) && !runtime.scan_bluetooth());
+    }
+    {
+        Runtime runtime(false, {}, {}, [](BleSession::Observer observer, Stop stop) {
+            return std::make_shared<BleSession>(std::move(observer), std::move(stop), QB_BLE_FIXTURE);
+        });
+        assert(runtime.scan_bluetooth() && runtime.wait_idle(2000));
+        ReaderConfig selected; selected.ultra_ble_token = std::string(16, 'e');
+        assert(runtime.connect(selected) && runtime.wait_idle(2000));
+        const auto snapshot = runtime.snapshot();
+        assert(!snapshot.connected && snapshot.cleanup_failed);
+        assert(snapshot.detail.find("pairing before PIN") != std::string::npos);
+        assert(snapshot.detail.find("timeout") != std::string::npos);
         assert(!runtime.connect({}) && !runtime.detect({}) && !runtime.scan_bluetooth());
     }
     {

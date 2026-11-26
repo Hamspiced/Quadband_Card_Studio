@@ -9,6 +9,7 @@
 #include <spawn.h>
 #include <sys/wait.h>
 #include <thread>
+#include <utility>
 #include <unistd.h>
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
@@ -41,6 +42,28 @@ std::string helper_path() {
 bool token_valid(const std::string& s) {
     return s.size() == 16 && std::all_of(s.begin(), s.end(),
         [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); });
+}
+std::string failure_detail(const std::string& payload) {
+    const std::pair<const char*, const char*> phases[]{
+        {"preflight", "runtime check"}, {"scanning", "scan"}, {"select", "selection"},
+        {"pairing", "pairing before PIN"}, {"pin", "PIN entry"}, {"connecting", "GATT connection"},
+        {"subscribing", "notification subscription"}, {"validating", "validation"},
+        {"exchange", "transaction"}, {"disconnect", "disconnect"}};
+    const std::pair<const char*, const char*> reasons[]{
+        {"timeout", "Reader did not respond; keep it awake and close competing reader apps."},
+        {"authentication", "Pairing was refused or canceled; check the reader's configured pairing policy/PIN."},
+        {"busy", "Another connection or pairing attempt is active; close the competing client."},
+        {"permission", "BlueZ denied access; check normal-user Bluetooth permissions."},
+        {"unavailable", "Reader or adapter is unavailable; check power and scan again."},
+        {"dependencies", "Requires normal-user Python, BlueZ, Bleak >=0.22.3 and dbus-fast."},
+        {"cleanup", "The backend could not confirm disconnect; restart the application."},
+        {"protocol", "Selection or helper protocol was invalid; no automatic retry."},
+        {"compatibility", "Helper Bluetooth API mismatch; report this phase and category."},
+        {"transport", "Helper transport failed; no backend text or PIN was recorded."}};
+    for (const auto& phase : phases) for (const auto& reason : reasons)
+        if (payload == std::string("ble:") + phase.first + ":" + reason.first)
+            return std::string("Bluetooth ") + phase.second + " failed (" + reason.first + "). " + reason.second;
+    return "Bluetooth helper failed; unrecognized backend details withheld.";
 }
 }
 BleSession::BleSession(Observer observer, Stop stop, const std::string& supplied)
@@ -127,11 +150,15 @@ bool BleSession::healthy() {
     pid_t result;
     do { result = waitpid(child_, nullptr, WNOHANG); } while (result < 0 && errno == EINTR);
     if (result != 0) {
+        if (last_error_.empty()) last_error_ = "Bluetooth helper exited between requests.";
         if (result == child_ || (result < 0 && errno == ECHILD)) child_ = -1;
         shutdown(); return false;
     }
     pollfd p{input_, POLLIN, 0};
     if (poll(&p, 1, 0) > 0 && p.revents & (POLLIN | POLLERR | POLLHUP | POLLNVAL)) {
+        if (last_error_.empty()) last_error_ = p.revents & POLLIN ?
+            "Bluetooth helper sent unexpected data between requests." :
+            "Bluetooth helper pipe closed between requests.";
         shutdown(); return false;
     }
     return true;
@@ -168,13 +195,18 @@ bool BleSession::send(uint8_t kind, const Bytes& data, Deadline due, const Stop&
 }
 Status BleSession::request(uint8_t kind, const Bytes& data, Bytes& response, unsigned timeout, const Stop& stop) {
     response.clear();
-    if (!healthy() || ++request_ == 0) { shutdown(); return UNAVAILABLE; }
+    if (!healthy() || ++request_ == 0) {
+        if (last_error_.empty()) last_error_ = "Bluetooth helper is unavailable before the request.";
+        shutdown(); return UNAVAILABLE;
+    }
     const auto due = Clock::now() + std::chrono::milliseconds(timeout);
     const Stop canceled = [this, kind, &stop] {
         return ((kind == 1 || kind == 2 || kind == 5) && stop_ && stop_()) || (stop && stop());
     };
     if (!send(kind, data, due, canceled)) { shutdown(); return canceled() ? CANCELLED : IO_ERROR; }
     bool pin_seen = false;
+    std::string phase = kind == 1 ? "scanning" : kind == 2 ? "select" :
+        kind == 3 ? "exchange" : kind == 4 ? "disconnect" : "preflight";
     for (unsigned events = 0; events < 32;) {
         Bytes pin;
         { std::lock_guard<std::mutex> lock(pin_mutex_);
@@ -205,6 +237,11 @@ Status BleSession::request(uint8_t kind, const Bytes& data, Bytes& response, uns
             { std::lock_guard<std::mutex> lock(pin_mutex_); prompt_ = answered_ = false; }
             return OK;
         }
+        if (envelope[1] == 130) {
+            if (last_error_.empty())
+                last_error_ = failure_detail(std::string(envelope.begin() + 10, envelope.end()));
+            break;
+        }
         if (envelope[1] != 129) break;
         std::string state(envelope.begin() + 10, envelope.end());
         if (state == "pin") {
@@ -215,10 +252,14 @@ Status BleSession::request(uint8_t kind, const Bytes& data, Bytes& response, uns
             (kind == 2 && (state == "pairing" || state == "pin" || state == "connecting" ||
                            state == "subscribing" || state == "validating"));
         if (!valid_event) break;
+        phase = state;
         { std::lock_guard<std::mutex> lock(pin_mutex_); prompt_ = state == "pin"; }
         if (observer_) observer_(state);
         ++events;
     }
+    if (last_error_.empty())
+        last_error_ = canceled() ? "Bluetooth request canceled." :
+            failure_detail("ble:" + phase + (Clock::now() >= due ? ":timeout" : ":transport"));
     shutdown();
     if (observer_) observer_("disconnected");
     return canceled() ? CANCELLED : Clock::now() >= due ? TIMEOUT : IO_ERROR;
@@ -226,7 +267,8 @@ Status BleSession::request(uint8_t kind, const Bytes& data, Bytes& response, uns
 Status BleSession::preflight(std::string& detail) {
     Bytes response; auto status = request(5, {}, response, 4000, {});
     detail = status == OK ? "Bluetooth runtime available (no scan performed)" :
-        "Bluetooth requires unprivileged Linux, python3, bluez, python3-bleak >=0.22.3, python3-dbus-fast";
+        !last_error_.empty() ? last_error_ :
+            "Bluetooth requires unprivileged Linux, python3, bluez, python3-bleak >=0.22.3, python3-dbus-fast";
     return status;
 }
 Status BleSession::scan(std::vector<BlePeer>& peers) {

@@ -105,6 +105,12 @@ class VersionTests(unittest.TestCase):
 
 
 class PackagingTests(unittest.TestCase):
+    def test_zero_component_release_does_not_enter_desktop_publisher(self):
+        source = (ROOT/'.github/workflows/release.yml').read_text()
+        prepare_header = source.split('  prepare:', 1)[1].split('    runs-on:', 1)[0]
+        self.assertIn("!startsWith(github.event.release.tag_name || inputs.release-tag, 'cardputerzero-v')",
+                      prepare_header)
+
     def test_zero_package_job_installs_bluetooth_test_runtime(self):
         source = (ROOT/'.github/workflows/cardputerzero.yml').read_text()
         package_job = source.split('  test-and-package:', 1)[1]

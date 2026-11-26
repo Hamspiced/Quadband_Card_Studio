@@ -51,8 +51,8 @@ jobs:
           python devices/cardputerzero/build.py --device --zig "$PWD/.build/zero-toolchain/zig-x86_64-linux-0.15.1/zig"
           python devices/cardputerzero/package.py --zig-root "$PWD/.build/zero-toolchain/zig-x86_64-linux-0.15.1"
           python -m unittest discover -s devices/cardputerzero/tests -p 'test_*.py'
-          dpkg-deb --info dist/quadband-cardputerzero_0.4.0_arm64.deb
-          dpkg-deb --contents dist/quadband-cardputerzero_0.4.0_arm64.deb
+          dpkg-deb --info dist/quadband-cardputerzero_0.4.1_arm64.deb
+          dpkg-deb --contents dist/quadband-cardputerzero_0.4.1_arm64.deb
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: Quadband-CardputerZero-development

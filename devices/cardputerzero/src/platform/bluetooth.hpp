@@ -13,6 +13,7 @@ public:
     Status connect(const std::string&);
     Status disconnect();
     bool cleanup_unverified() const { return cleanup_unverified_; }
+    const std::string& detail() const { return last_error_; }
     Status exchange(const Bytes&, Bytes&, unsigned, const Stop&);
     bool pin(const std::string&);
     bool healthy();
@@ -26,6 +27,7 @@ private:
     std::array<char, 6> pin_{};
     bool prompt_ = false, answered_ = false;
     bool connected_ = false, cleanup_unverified_ = false;
+    std::string last_error_;
     Status request(uint8_t, const Bytes&, Bytes&, unsigned, const Stop&);
     bool transfer(int, uint8_t*, size_t, bool, Deadline, const Stop&);
     bool send(uint8_t, const Bytes&, Deadline, const Stop&);

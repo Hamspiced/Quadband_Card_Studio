@@ -162,7 +162,7 @@ class HelperTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ipc.ProtocolError):
             await self.s.run()
         errors = [item[3] for item in self.pipe.sent if item[0] == ipc.ERROR]
-        self.assertEqual(errors, [b"ble_failed_check_dependencies_permissions_pairing"])
+        self.assertEqual(errors, [b"ble:select:transport"])
         self.s.operation.assert_awaited_once()
 
     async def test_close_failure_never_acknowledged(self):
@@ -174,7 +174,35 @@ class HelperTests(unittest.IsolatedAsyncioTestCase):
             await self.s.run()
         self.assertFalse(any(item[0] == ipc.RESULT for item in self.pipe.sent))
         self.assertEqual([item[3] for item in self.pipe.sent if item[0] == ipc.ERROR],
-                         [b"ble_failed_check_dependencies_permissions_pairing"])
+                         [b"ble:disconnect:cleanup"])
+
+    async def test_pairing_timeout_preserves_phase_without_backend_text(self):
+        async def timeout(kind, data):
+            await self.s.event("pairing")
+            raise TimeoutError("sensitive backend metadata")
+        self.s.operation = timeout
+        with self.assertRaises(ipc.ProtocolError):
+            await self.s.reply(ipc.CONNECT, b"a" * 16)
+        self.assertEqual(self.pipe.sent[-1], (ipc.ERROR, 7, 1, b"ble:pairing:timeout"))
+        self.assertTrue(self.s.failed)
+
+    def test_failure_categories_ignore_all_backend_messages(self):
+        for name, reason in (
+                ("org.bluez.Error.AuthenticationTimeout", "timeout"),
+                ("org.bluez.Error.AuthenticationRejected", "authentication"),
+                ("org.bluez.Error.InProgress", "busy"),
+                ("org.freedesktop.DBus.Error.AccessDenied", "permission"),
+                ("org.bluez.Error.NotReady", "unavailable"),
+                ("untrusted.sensitive.metadata", "transport")):
+            error = RuntimeError("sensitive backend metadata")
+            error.type = name
+            self.assertEqual(helper.failure_payload("pairing", error),
+                             f"ble:pairing:{reason}".encode())
+        self.assertEqual(helper.failure_payload("untrusted phase", RuntimeError("private")),
+                         b"ble:preflight:dependencies")
+        for error in (AttributeError("private field"), TypeError("private arguments"),
+                      NotImplementedError("private backend details")):
+            self.assertEqual(helper.failure_payload("pairing", error), b"ble:pairing:compatibility")
 
     async def test_session_mismatch_and_request_replay_fail_closed(self):
         for envelope in ((ipc.SCAN, 8, 2, b""), (ipc.SCAN, 7, 1, b""), (ipc.RESULT, 7, 2, b"")):

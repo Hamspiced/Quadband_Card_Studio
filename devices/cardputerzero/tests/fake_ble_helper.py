@@ -33,9 +33,13 @@ while True:
     elif kind == 4:
         send(130 if close_fail else 128, session, request)
     elif kind == 1:
-        send(128, session, request, b"\x03" + b"a" * 16 + b"\x03One" + b"b" * 16 + b"\x03Two" +
-             b"d" * 16 + b"\x04Fail")
+        send(128, session, request, b"\x04" + b"a" * 16 + b"\x03One" + b"b" * 16 + b"\x03Two" +
+             b"d" * 16 + b"\x04Fail" + b"e" * 16 + b"\x07Timeout")
     elif kind == 2:
+        if payload in (b"e" * 16, b"f" * 16):
+            error = b"ble:pairing:timeout" if payload == b"e" * 16 else b"sensitive unrecognized backend text"
+            send(130, session, request, error)
+            continue
         close_fail = payload == b"d" * 16
         if payload == b"c" * 16:
             for _ in range(33):

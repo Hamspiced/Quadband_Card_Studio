@@ -83,7 +83,7 @@ def main():
     (payload / "quadband").mkdir(exist_ok=True)
     for source in shared:
         shutil.copy2(source, payload / "quadband" / source.name)
-    info = {"version": "0.4.0", "target": "linux-arm64" if args.zig else "linux" if args.device else "host-simulator",
+    info = {"version": "0.4.1", "target": "linux-arm64" if args.zig else "linux" if args.device else "host-simulator",
             "lvgl": lock, "hardwareValidated": False,
             "binary": {"bytes": binary.stat().st_size, "sha256": hashlib.sha256(binary.read_bytes()).hexdigest()},
             "sources": {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(sources)}}

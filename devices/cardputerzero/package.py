@@ -139,7 +139,7 @@ def package(build, output, zig_root=None):
     checksums = "".join(hashlib.sha256(data).hexdigest() + "  " + name + "\n"
                         for name, (data, _) in sorted(files.items()))
     files[doc + "SHA256SUMS.txt"] = (checksums.encode(), 0o644)
-    control = ("Package: quadband-cardputerzero\nVersion: 0.4.0\nSection: utils\nPriority: optional\n"
+    control = ("Package: quadband-cardputerzero\nVersion: 0.4.1\nSection: utils\nPriority: optional\n"
                "Architecture: arm64\nMaintainer: Midwest Gadgets\n"
                "Depends: python3 (>= 3.11), bluez, python3-bleak (>= 0.22.3), python3-dbus-fast\n"
                "Description: Quadband Card Studio handheld card workbench\n"
@@ -160,7 +160,7 @@ def package(build, output, zig_root=None):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build-dir", type=Path, default=ROOT / ".build/cardputerzero-arm64")
-    parser.add_argument("--output", type=Path, default=ROOT / "dist/quadband-cardputerzero_0.4.0_arm64.deb")
+    parser.add_argument("--output", type=Path, default=ROOT / "dist/quadband-cardputerzero_0.4.1_arm64.deb")
     parser.add_argument("--zig-root", type=Path, required=True)
     args = parser.parse_args()
     package(args.build_dir, args.output, args.zig_root)

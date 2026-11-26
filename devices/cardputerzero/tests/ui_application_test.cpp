@@ -155,6 +155,13 @@ void bluetooth_selection_and_pin() {
     f.s.connected = true; f.s.config.ultra_ble_token = "bbbbbbbbbbbbbbbb"; f.publish();
     f.choose("Disconnect readers (no fallback)"); CHECK(f.disconnects == 1);
     CHECK(f.intents.empty());
+    f.s.connected = false; f.s.cleanup_failed = true;
+    f.s.detail = "Bluetooth pairing before PIN failed (timeout). Cleanup unverified; restart Quadband.";
+    f.s.bluetooth.state = f.s.detail; f.publish();
+    CHECK(find_label(f.root, f.s.bluetooth.state));
+    CHECK(find_label(f.root, "CLEANUP UNVERIFIED - reconnect/restart. " + f.s.detail));
+    CHECK(lv_obj_has_state(f.button("Scan Bluetooth (6 seconds / max 16)"), LV_STATE_DISABLED));
+    CHECK(f.intents.empty() && f.ble_scans == 1);
 }
 void ultra_discovery_status() {
     Fixture f;

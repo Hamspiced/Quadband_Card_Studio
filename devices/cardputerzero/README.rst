@@ -1,7 +1,7 @@
 Quadband Card Studio for CardputerZero
 ====================================
 
-Development application 0.4.0 for the Raspberry Pi CM0/aarch64 Linux
+Development application 0.4.1 for the Raspberry Pi CM0/aarch64 Linux
 CardputerZero and Zero-Lite. This is a separate keyboard-first application,
 not ESP32 firmware, an OS image, or a CoreS3 webflasher payload. Existing
 CoreS3 and desktop targets share the corresponding guarded NDEF policy.
@@ -50,6 +50,14 @@ requests invalidate the link. A transaction shares one write/reply deadline.
 Transport changes require an acknowledged helper disconnect. Unverified
 BLE cleanup or active helper death quarantines all transports until restart;
 an interrupted mutation retains its existing WRITE UNVERIFIED warning.
+
+Version 0.4.1 retains the first helper failure phase and a fixed category
+(timeout, authentication, busy, permission, unavailable or transport) on the
+Bluetooth screen and cleanup warning. Raw backend text, device addresses
+and PINs are never forwarded. This is diagnostic information, not evidence
+of a successful disconnect: restart-only quarantine and no-replay rules
+remain unchanged. A pairing timeout before the PIN stage is distinct from
+a timeout while entering a local PIN or subscribing to notifications.
 
 For a new bond, an ephemeral selected-peer-only BlueZ KeyboardOnly Agent1
 requests the reader's six-digit PIN locally. Pair is invoked on the same
@@ -252,7 +260,7 @@ compiler; the helper does not install one::
     python3 devices/cardputerzero/package.py --zig-root /path/to/zig-directory
     python3 -m unittest discover -s devices/cardputerzero/tests -p 'test_*.py'
 
-The output is dist/quadband-cardputerzero_0.4.0_arm64.deb with a SHA-256
+The output is dist/quadband-cardputerzero_0.4.1_arm64.deb with a SHA-256
 sidecar. Packaging rejects a Mac/simulator/dynamic binary or changed
 source/artifact hashes. It includes source, notices and internal checksums.
 It does not install or publish anything. Its post-install script applies

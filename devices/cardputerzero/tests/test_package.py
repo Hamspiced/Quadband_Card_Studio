@@ -78,7 +78,7 @@ class Packaging(unittest.TestCase):
         self.assertFalse(any(".build/" in name or name.endswith(".md") for name in files))
 
     def test_real_development_package(self):
-        path = ROOT / "dist/quadband-cardputerzero_0.4.0_arm64.deb"
+        path = ROOT / "dist/quadband-cardputerzero_0.4.1_arm64.deb"
         if not path.exists():
             self.skipTest("Build the arm64 package to exercise its contents")
         ar = members(path.read_bytes())

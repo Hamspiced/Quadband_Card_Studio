@@ -51,7 +51,7 @@ int main(int argc, char** argv) {
             else if (argument == "--ultra-serial") { config.ultra_serial = value(); config.ultra_autodetected = false; }
             else if (argument == "--grove-i2c-confirmed") config.grove_i2c_confirmed = true;
             else if (argument == "--help") {
-                std::puts("Quadband CardputerZero 0.4.0\n"
+                std::puts("Quadband CardputerZero 0.4.1\n"
                     "  --simulate [--headless] [--seconds N] [--screenshot image.ppm]\n"
                     "  --device [--framebuffer PATH] [--keyboard PATH]\n"
                     "  Optional endpoints: --hf-i2c PATH --grove-i2c-confirmed\n"
